@@ -1,0 +1,1011 @@
+//! Builtin functions. One `invoke(name, ...)` dispatch.
+//!
+//! Two groups share the table: markdown helpers (`headings`,
+//! `codeblocks`, `section`, ...) work on Node values built from the
+//! parser; jq classics (`select`, `map`, `type`, `length`, `sub`,
+//! `gsub`, ...) match the jq spec across every Value variant.
+
+use std::sync::Arc;
+
+use regex::Regex;
+
+use crate::ast::{attr, Node, NodeKind};
+use crate::error::RunError;
+use crate::eval::{self, Env};
+use crate::events::plain_text;
+use crate::expr::Expr;
+use crate::value::Value;
+
+type Stream = Box<dyn Iterator<Item = Result<Value, RunError>>>;
+
+/// Invoke the builtin called `name`. Returns `None` if the name
+/// isn't registered, so the caller can surface `unknown builtin`.
+pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stream> {
+    use NodeKind::{Heading, Paragraph, Code, Link, Image, Item, List, Table, Quote, FootnoteDef};
+    Some(match name {
+        "headings" => descendants(input, Heading),
+        "paragraphs" => descendants(input, Paragraph),
+        "codeblocks" | "code" => descendants(input, Code),
+        "links" => descendants(input, Link),
+        "images" => descendants(input, Image),
+        "items" => descendants(input, Item),
+        "lists" => descendants(input, List),
+        "tables" => descendants(input, Table),
+        "blockquotes" => descendants(input, Quote),
+        "footnotes" => descendants(input, FootnoteDef),
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+            headings_at(input, i64::from(name.as_bytes()[1] - b'0'))
+        }
+        "section" => return Some(section(args, input, env)),
+        "text" => one(text_of(&input)),
+        "anchor" => one(anchor_of(&input)),
+        "type" => ok(Value::from(input.type_name())),
+        "length" => one(length_of(&input)),
+
+        "empty" => Box::new(std::iter::empty()),
+        "first" => first_or(args, input, env, true),
+        "last" => first_or(args, input, env, false),
+        "select" => select(args, input, env),
+        "map" => map_builtin(args, input, env),
+        "has" => has(args, input, env),
+        "keys" => one(keys_of(&input)),
+        "add" => one(add_all(&input)),
+        "not" => ok(Value::Bool(!input.truthy())),
+        "any" => one(reduce_bool(&input, |a, b| a || b, false)),
+        "all" => one(reduce_bool(&input, |a, b| a && b, true)),
+        "reverse" => one(reverse_of(input)),
+        "sort" => one(sort_of(input)),
+        "unique" => one(unique_of(input)),
+        "tostring" => one(to_string_value(&input)),
+        "tonumber" => one(to_number(&input)),
+
+        "test" => one(regex_bool(args, &input, env, |re, s| re.is_match(s))),
+        "sub" => one(regex_sub(args, &input, env, false)),
+        "gsub" => one(regex_sub(args, &input, env, true)),
+        "startswith" => one(str_pred(args, &input, env, |s, p| s.starts_with(p))),
+        "endswith" => one(str_pred(args, &input, env, |s, p| s.ends_with(p))),
+        "ascii_downcase" => one(ascii_case(&input, false)),
+        "ascii_upcase" => one(ascii_case(&input, true)),
+        "split" => one(split(args, &input, env)),
+        "join" => one(join(args, &input, env)),
+        "ltrimstr" => one(trim_side(args, &input, env, true)),
+        "rtrimstr" => one(trim_side(args, &input, env, false)),
+        "contains" => one(contains(args, &input, env)),
+        "tojson" => one(to_json(&input)),
+        "fromjson" => one(from_json(&input)),
+        "env" | "$ENV" => one(Ok(env_as_value())),
+
+        // Collection builtins that use a key function.
+        "sort_by" => one(by_key_array(args, input, env, |items| {
+            items.sort_by(|(ka, _), (kb, _)| eval::value_cmp_for_sort(ka, kb));
+        })),
+        "unique_by" => one(by_key_array(args, input, env, |items| {
+            items.sort_by(|(ka, _), (kb, _)| eval::value_cmp_for_sort(ka, kb));
+            items.dedup_by(|a, b| eval::value_cmp_for_sort(&a.0, &b.0).is_eq());
+        })),
+        "group_by" => one(group_by(args, input, env)),
+        "min_by" => one(extreme_by(args, input, env, true)),
+        "max_by" => one(extreme_by(args, input, env, false)),
+        "min" => one(extreme(input, true)),
+        "max" => one(extreme(input, false)),
+
+        // Stream slicing.
+        "range" => range(args, input, env),
+        "limit" => limit(args, input, env),
+        "nth" => one(nth(args, input, env)),
+
+        // Paths.
+        "paths" => paths(input),
+        "getpath" => one(getpath(args, input, env)),
+        "setpath" => one(setpath(args, input, env)),
+
+        // Markdown helpers.
+        "toc" => one(Ok(toc(&input))),
+        "frontmatter" => one(Ok(frontmatter(&input))),
+        "node" => one(build_node(args, input, env)),
+
+        _ => return None,
+    })
+}
+
+// --- helpers: stream constructors -------------------------------------------
+
+fn ok(v: Value) -> Stream {
+    Box::new(std::iter::once(Ok(v)))
+}
+fn err(e: RunError) -> Stream {
+    Box::new(std::iter::once(Err(e)))
+}
+fn one(r: Result<Value, RunError>) -> Stream {
+    Box::new(std::iter::once(r))
+}
+
+fn type_err(expected: &str, got: &Value) -> RunError {
+    RunError::Type {
+        expected: expected.into(),
+        got: got.type_name().into(),
+    }
+}
+
+// --- markdown filters --------------------------------------------------------
+
+fn descendants(input: Value, kind: NodeKind) -> Stream {
+    let mut out = Vec::new();
+    collect(&input, kind, &mut out);
+    Box::new(out.into_iter().map(Ok))
+}
+
+fn collect(v: &Value, kind: NodeKind, out: &mut Vec<Value>) {
+    match v {
+        Value::Node(n) => {
+            if n.kind == kind {
+                out.push(Value::Node(n.clone()));
+            }
+            n.children.iter().for_each(|c| collect(c, kind, out));
+        }
+        Value::Array(arr) => arr.iter().for_each(|c| collect(c, kind, out)),
+        Value::Object(m) => m.values().for_each(|c| collect(c, kind, out)),
+        _ => {}
+    }
+}
+
+fn headings_at(input: Value, level: i64) -> Stream {
+    let mut all = Vec::new();
+    collect(&input, NodeKind::Heading, &mut all);
+    let out: Vec<Value> = all
+        .into_iter()
+        .filter(|v| matches!(v, Value::Node(n) if heading_level(n) == level))
+        .collect();
+    Box::new(out.into_iter().map(Ok))
+}
+
+fn heading_level(n: &Node) -> i64 {
+    match n.attrs.get(attr::LEVEL) {
+        Some(Value::Number(x)) => *x as i64,
+        _ => 0,
+    }
+}
+
+fn section(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 1 {
+        return err(RunError::Other("section/1: expected one argument".into()));
+    }
+    let name = match eval::eval_expr(&args[0], input.clone(), env).next() {
+        Some(Ok(Value::String(s))) => s.to_string(),
+        Some(Ok(other)) => return err(type_err("string", &other)),
+        Some(Err(e)) => return err(e),
+        None => return Box::new(std::iter::empty()),
+    };
+    let Value::Node(root) = input else {
+        return err(RunError::Type {
+            expected: "node".into(),
+            got: "non-node".into(),
+        });
+    };
+    let mut out = Vec::new();
+    build_sections(&root, &name, &mut out);
+    Box::new(out.into_iter().map(Ok))
+}
+
+fn build_sections(node: &Node, name: &str, out: &mut Vec<Value>) {
+    let mut i = 0;
+    while i < node.children.len() {
+        let Value::Node(heading) = &node.children[i] else {
+            i += 1;
+            continue;
+        };
+        if heading.kind != NodeKind::Heading {
+            build_sections(heading, name, out);
+            i += 1;
+            continue;
+        }
+        if !plain_text(&heading.children).eq_ignore_ascii_case(name) {
+            build_sections(heading, name, out);
+            i += 1;
+            continue;
+        }
+        let level = heading_level(heading);
+        let mut section = Node::new(NodeKind::Section);
+        section.children.push(Value::Node(heading.clone()));
+        let mut j = i + 1;
+        while let Some(Value::Node(sibling)) = node.children.get(j) {
+            if sibling.kind == NodeKind::Heading && heading_level(sibling) <= level {
+                break;
+            }
+            section.children.push(node.children[j].clone());
+            j += 1;
+        }
+        out.push(Value::Node(Arc::new(section)));
+        i = j;
+    }
+}
+
+fn text_of(input: &Value) -> Result<Value, RunError> {
+    match input {
+        Value::Node(n) => Ok(Value::from(plain_text(&n.children))),
+        Value::String(_) => Ok(input.clone()),
+        other => Err(type_err("node or string", other)),
+    }
+}
+
+fn anchor_of(input: &Value) -> Result<Value, RunError> {
+    match input {
+        Value::Node(n) if n.kind == NodeKind::Heading => {
+            Ok(Value::from(slug::slugify(plain_text(&n.children))))
+        }
+        Value::String(s) => Ok(Value::from(slug::slugify(s.as_ref()))),
+        other => Err(type_err("heading node or string", other)),
+    }
+}
+
+fn length_of(v: &Value) -> Result<Value, RunError> {
+    let n: i64 = match v {
+        Value::Null => 0,
+        Value::Array(a) => a.len() as i64,
+        Value::Object(m) => m.len() as i64,
+        Value::String(s) => s.chars().count() as i64,
+        Value::Node(n) => n.children.len() as i64,
+        Value::Bool(_) | Value::Number(_) => return Err(type_err("length-capable", v)),
+    };
+    Ok(Value::from(n))
+}
+
+// --- collections -------------------------------------------------------------
+
+fn first_or(args: &[Expr], input: Value, env: &Env, first: bool) -> Stream {
+    if args.is_empty() {
+        return one(head_or_tail(&input, first));
+    }
+    let s = eval::eval_expr(&args[0], input, env);
+    let pick = if first {
+        s.take(1).next()
+    } else {
+        s.last()
+    };
+    one(pick.unwrap_or(Ok(Value::Null)))
+}
+
+fn head_or_tail(v: &Value, first: bool) -> Result<Value, RunError> {
+    let slice: &[Value] = match v {
+        Value::Array(a) => a,
+        Value::Node(n) => &n.children,
+        Value::Null => return Ok(Value::Null),
+        other => return Err(type_err("array or node", other)),
+    };
+    Ok(if first { slice.first() } else { slice.last() }
+        .cloned()
+        .unwrap_or(Value::Null))
+}
+
+fn select(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 1 {
+        return err(RunError::Other("select/1 expects one argument".into()));
+    }
+    let mut s = eval::eval_expr(&args[0], input.clone(), env);
+    match s.next() {
+        Some(Ok(v)) if v.truthy() => ok(input),
+        Some(Err(e)) => err(e),
+        _ => Box::new(std::iter::empty()),
+    }
+}
+
+fn map_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 1 {
+        return err(RunError::Other("map/1 expects one argument".into()));
+    }
+    let items: Vec<Value> = match input {
+        Value::Array(a) => (*a).clone(),
+        Value::Node(n) => n.children.clone(),
+        Value::Null => Vec::new(),
+        other => return err(type_err("array or node", &other)),
+    };
+    let expr = args[0].clone();
+    let mut out = Vec::with_capacity(items.len());
+    for v in items {
+        for r in eval::eval_expr(&expr, v, env) {
+            match r {
+                Ok(x) => out.push(x),
+                Err(e) => return err(e),
+            }
+        }
+    }
+    ok(Value::Array(Arc::new(out)))
+}
+
+fn has(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 1 {
+        return err(RunError::Other("has/1 expects one argument".into()));
+    }
+    let key = eval::eval_expr(&args[0], input.clone(), env).next();
+    let present = match key {
+        Some(Ok(Value::String(s))) => match &input {
+            Value::Object(m) => m.contains_key(s.as_ref()),
+            Value::Node(n) => {
+                matches!(s.as_ref(), "kind" | "children" | "text" | "attrs")
+                    || n.attrs.contains_key(&*s.to_string())
+            }
+            _ => false,
+        },
+        Some(Ok(Value::Number(n))) => {
+            let idx = n as isize;
+            let len = match &input {
+                Value::Array(a) => a.len() as isize,
+                Value::Node(node) => node.children.len() as isize,
+                _ => 0,
+            };
+            idx >= 0 && idx < len
+        }
+        Some(Ok(other)) => return err(type_err("string or number key", &other)),
+        Some(Err(e)) => return err(e),
+        None => false,
+    };
+    ok(Value::Bool(present))
+}
+
+fn keys_of(input: &Value) -> Result<Value, RunError> {
+    let arr: Vec<Value> = match input {
+        Value::Object(m) => m.keys().cloned().map(Value::from).collect(),
+        Value::Array(a) => (0..a.len() as i64).map(Value::from).collect(),
+        Value::Node(n) => {
+            let mut ks: Vec<Value> = vec![Value::from("kind"), Value::from("children"), Value::from("text")];
+            ks.extend(n.attrs.keys().map(|k| Value::from(*k)));
+            ks
+        }
+        other => return Err(type_err("keyed value", other)),
+    };
+    Ok(Value::Array(Arc::new(arr)))
+}
+
+fn add_all(input: &Value) -> Result<Value, RunError> {
+    let Value::Array(arr) = input else {
+        return Err(type_err("array", input));
+    };
+    let mut iter = arr.iter().cloned();
+    let Some(first) = iter.next() else {
+        return Ok(Value::Null);
+    };
+    iter.try_fold(first, |a, b| eval::apply_add(&a, &b))
+}
+
+fn reduce_bool(input: &Value, combine: fn(bool, bool) -> bool, init: bool) -> Result<Value, RunError> {
+    match input {
+        Value::Array(a) => Ok(Value::Bool(a.iter().fold(init, |acc, v| combine(acc, v.truthy())))),
+        Value::Null => Ok(Value::Bool(init)),
+        other => Err(type_err("array", other)),
+    }
+}
+
+fn reverse_of(input: Value) -> Result<Value, RunError> {
+    match input {
+        Value::String(s) => Ok(Value::from(s.chars().rev().collect::<String>())),
+        other => map_array(other, "array or string", |v| v.reverse()),
+    }
+}
+
+fn sort_of(input: Value) -> Result<Value, RunError> {
+    map_array(input, "array", |v| v.sort_by(eval::value_cmp_for_sort))
+}
+
+fn unique_of(input: Value) -> Result<Value, RunError> {
+    map_array(input, "array", |v| {
+        v.sort_by(eval::value_cmp_for_sort);
+        v.dedup_by(|a, b| eval::value_cmp_for_sort(a, b).is_eq());
+    })
+}
+
+/// Run `f` on a cloned copy of an array's contents. `Null` passes
+/// through; other types get a type error using `expected` as the
+/// expected-type label.
+fn map_array(
+    input: Value,
+    expected: &str,
+    f: impl FnOnce(&mut Vec<Value>),
+) -> Result<Value, RunError> {
+    match input {
+        Value::Array(a) => {
+            let mut v = (*a).clone();
+            f(&mut v);
+            Ok(Value::Array(Arc::new(v)))
+        }
+        Value::Null => Ok(Value::Null),
+        other => Err(type_err(expected, &other)),
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)] // called via `one(...)` which takes Result.
+fn to_string_value(v: &Value) -> Result<Value, RunError> {
+    Ok(match v {
+        Value::String(_) => v.clone(),
+        Value::Null => Value::from("null"),
+        Value::Bool(b) => Value::from(if *b { "true" } else { "false" }),
+        Value::Number(n) if n.fract() == 0.0 && n.is_finite() => Value::from((*n as i64).to_string()),
+        Value::Number(n) => Value::from(n.to_string()),
+        Value::Array(_) | Value::Object(_) => {
+            let json = crate::emit::json::value_to_json(
+                v,
+                crate::emit::json::JsonOptions { compact: true, include_spans: false },
+            );
+            Value::from(serde_json::to_string(&json).unwrap_or_default())
+        }
+        Value::Node(n) => Value::from(plain_text(&n.children)),
+    })
+}
+
+fn to_number(v: &Value) -> Result<Value, RunError> {
+    match v {
+        Value::Number(_) => Ok(v.clone()),
+        Value::String(s) => s
+            .parse::<f64>()
+            .map(Value::Number)
+            .map_err(|_| RunError::Other(format!("tonumber: cannot parse `{s}`"))),
+        other => Err(type_err("number or string", other)),
+    }
+}
+
+// --- regex / string ops ------------------------------------------------------
+
+fn regex_bool(
+    args: &[Expr],
+    input: &Value,
+    env: &Env,
+    f: impl Fn(&Regex, &str) -> bool,
+) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let pattern = eval_string_arg(args.first(), input, env)?;
+    let re = Regex::new(&pattern)?;
+    Ok(Value::Bool(f(&re, s)))
+}
+
+fn regex_sub(args: &[Expr], input: &Value, env: &Env, all: bool) -> Result<Value, RunError> {
+    if args.len() < 2 {
+        return Err(RunError::Other("sub/gsub: expected (pattern; replacement)".into()));
+    }
+    let s = expect_string(input)?;
+    let pattern = eval_string_arg(Some(&args[0]), input, env)?;
+    let repl = eval_string_arg(Some(&args[1]), input, env)?;
+    let re = Regex::new(&pattern)?;
+    let repl_str: &str = &repl;
+    let out = if all {
+        re.replace_all(s, repl_str).into_owned()
+    } else {
+        re.replace(s, repl_str).into_owned()
+    };
+    Ok(Value::from(out))
+}
+
+fn str_pred(
+    args: &[Expr],
+    input: &Value,
+    env: &Env,
+    f: impl Fn(&str, &str) -> bool,
+) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let arg = eval_string_arg(args.first(), input, env)?;
+    Ok(Value::Bool(f(s, &arg)))
+}
+
+fn ascii_case(input: &Value, upper: bool) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    Ok(Value::from(if upper {
+        s.to_ascii_uppercase()
+    } else {
+        s.to_ascii_lowercase()
+    }))
+}
+
+fn expect_string(v: &Value) -> Result<&str, RunError> {
+    if let Value::String(s) = v {
+        Ok(s.as_ref())
+    } else {
+        Err(type_err("string", v))
+    }
+}
+
+fn eval_string_arg(arg: Option<&Expr>, input: &Value, env: &Env) -> Result<String, RunError> {
+    let Some(expr) = arg else {
+        return Err(RunError::Other("missing string argument".into()));
+    };
+    match eval::eval_expr(expr, input.clone(), env).next() {
+        Some(Ok(Value::String(s))) => Ok(s.to_string()),
+        Some(Ok(other)) => Err(type_err("string", &other)),
+        Some(Err(e)) => Err(e),
+        None => Err(RunError::Other("argument stream was empty".into())),
+    }
+}
+
+// ---- string / json helpers -------------------------------------------------
+
+fn split(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let sep = eval_string_arg(args.first(), input, env)?;
+    let parts: Vec<Value> = s.split(sep.as_str()).map(Value::from).collect();
+    Ok(Value::Array(Arc::new(parts)))
+}
+
+fn join(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
+    let Value::Array(arr) = input else {
+        return Err(type_err("array", input));
+    };
+    let sep = eval_string_arg(args.first(), input, env)?;
+    let mut out = String::new();
+    for (i, v) in arr.iter().enumerate() {
+        if i > 0 {
+            out.push_str(&sep);
+        }
+        match v {
+            Value::String(s) => out.push_str(s),
+            Value::Null => {}
+            other => {
+                use std::fmt::Write;
+                let _ = write!(out, "{other:?}");
+            }
+        }
+    }
+    Ok(Value::from(out))
+}
+
+fn trim_side(args: &[Expr], input: &Value, env: &Env, left: bool) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let needle = eval_string_arg(args.first(), input, env)?;
+    let trimmed = if left {
+        s.strip_prefix(needle.as_str()).unwrap_or(s)
+    } else {
+        s.strip_suffix(needle.as_str()).unwrap_or(s)
+    };
+    Ok(Value::from(trimmed.to_string()))
+}
+
+fn contains(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
+    let needle = match eval::eval_expr(&args[0], input.clone(), env).next() {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => return Err(e),
+        None => return Ok(Value::Bool(false)),
+    };
+    Ok(Value::Bool(value_contains(input, &needle)))
+}
+
+fn value_contains(haystack: &Value, needle: &Value) -> bool {
+    match (haystack, needle) {
+        (Value::String(a), Value::String(b)) => a.contains(b.as_ref()),
+        (Value::Array(a), Value::Array(b)) => b
+            .iter()
+            .all(|nb| a.iter().any(|ha| value_contains(ha, nb))),
+        (Value::Object(a), Value::Object(b)) => b.iter().all(|(k, v)| {
+            a.get(k).is_some_and(|av| value_contains(av, v))
+        }),
+        (a, b) => eval::value_cmp_for_sort(a, b).is_eq(),
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)] // called via `one(...)` which takes Result.
+fn to_json(input: &Value) -> Result<Value, RunError> {
+    let json = crate::emit::json::value_to_json(
+        input,
+        crate::emit::json::JsonOptions { compact: true, include_spans: false },
+    );
+    Ok(Value::from(serde_json::to_string(&json).unwrap_or_default()))
+}
+
+fn from_json(input: &Value) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let j: serde_json::Value = serde_json::from_str(s)
+        .map_err(|e| RunError::Other(format!("fromjson: {e}")))?;
+    Ok(json_to_value(j))
+}
+
+fn json_to_value(j: serde_json::Value) -> Value {
+    use serde_json::Value as J;
+    match j {
+        J::Null => Value::Null,
+        J::Bool(b) => Value::Bool(b),
+        J::Number(n) => Value::Number(n.as_f64().unwrap_or(f64::NAN)),
+        J::String(s) => Value::from(s),
+        J::Array(a) => Value::Array(Arc::new(a.into_iter().map(json_to_value).collect())),
+        J::Object(m) => {
+            let converted = m.into_iter().map(|(k, v)| (k, json_to_value(v))).collect();
+            Value::Object(Arc::new(converted))
+        }
+    }
+}
+
+fn env_as_value() -> Value {
+    use std::collections::BTreeMap;
+    let map: BTreeMap<String, Value> = std::env::vars().map(|(k, v)| (k, Value::from(v))).collect();
+    Value::Object(Arc::new(map))
+}
+
+// ---- key-function collection helpers ---------------------------------------
+
+/// Evaluate `f` on each array element to produce `(key, element)` pairs
+/// and hand them to `reorder`. Result is an Array of the elements in
+/// whatever order the reorder step leaves them in.
+fn by_key_array(
+    args: &[Expr],
+    input: Value,
+    env: &Env,
+    reorder: impl FnOnce(&mut Vec<(Value, Value)>),
+) -> Result<Value, RunError> {
+    let key_fn = key_fn_arg(args, "sort_by/unique_by/group_by")?;
+    let arr = expect_array(&input)?;
+    let mut items: Vec<(Value, Value)> = arr
+        .iter()
+        .map(|v| eval_key(key_fn, v, env).map(|k| (k, v.clone())))
+        .collect::<Result<_, _>>()?;
+    reorder(&mut items);
+    Ok(Value::Array(Arc::new(items.into_iter().map(|(_, v)| v).collect())))
+}
+
+fn group_by(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
+    let key_fn = key_fn_arg(args, "group_by")?;
+    let arr = expect_array(&input)?;
+    let mut items: Vec<(Value, Value)> = arr
+        .iter()
+        .map(|v| eval_key(key_fn, v, env).map(|k| (k, v.clone())))
+        .collect::<Result<_, _>>()?;
+    items.sort_by(|(ka, _), (kb, _)| eval::value_cmp_for_sort(ka, kb));
+
+    let mut groups: Vec<Vec<Value>> = Vec::new();
+    let mut last_key: Option<Value> = None;
+    for (k, v) in items {
+        let new_group = last_key
+            .as_ref()
+            .is_none_or(|prev| !eval::value_cmp_for_sort(prev, &k).is_eq());
+        if new_group {
+            groups.push(Vec::new());
+            last_key = Some(k);
+        }
+        groups.last_mut().unwrap().push(v);
+    }
+    let out: Vec<Value> = groups
+        .into_iter()
+        .map(|g| Value::Array(Arc::new(g)))
+        .collect();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+fn extreme_by(args: &[Expr], input: Value, env: &Env, least: bool) -> Result<Value, RunError> {
+    let key_fn = key_fn_arg(args, "min_by/max_by")?;
+    let arr = expect_array(&input)?;
+    if arr.is_empty() {
+        return Ok(Value::Null);
+    }
+    let mut best = (eval_key(key_fn, &arr[0], env)?, arr[0].clone());
+    for v in arr.iter().skip(1) {
+        let k = eval_key(key_fn, v, env)?;
+        let ord = eval::value_cmp_for_sort(&k, &best.0);
+        let replace = if least { ord.is_lt() } else { ord.is_gt() };
+        if replace {
+            best = (k, v.clone());
+        }
+    }
+    Ok(best.1)
+}
+
+fn extreme(input: Value, least: bool) -> Result<Value, RunError> {
+    let arr = expect_array(&input)?;
+    if arr.is_empty() {
+        return Ok(Value::Null);
+    }
+    let mut best = &arr[0];
+    for v in arr.iter().skip(1) {
+        let ord = eval::value_cmp_for_sort(v, best);
+        if (least && ord.is_lt()) || (!least && ord.is_gt()) {
+            best = v;
+        }
+    }
+    Ok(best.clone())
+}
+
+fn key_fn_arg<'a>(args: &'a [Expr], name: &str) -> Result<&'a Expr, RunError> {
+    args.first()
+        .ok_or_else(|| RunError::Other(format!("{name}: expected one argument")))
+}
+
+fn eval_key(f: &Expr, v: &Value, env: &Env) -> Result<Value, RunError> {
+    eval::eval_expr(f, v.clone(), env)
+        .next()
+        .unwrap_or(Ok(Value::Null))
+}
+
+fn expect_array(v: &Value) -> Result<&Vec<Value>, RunError> {
+    match v {
+        Value::Array(a) => Ok(a),
+        other => Err(type_err("array", other)),
+    }
+}
+
+// ---- stream slicing --------------------------------------------------------
+
+/// `range(m; n)` yields integers `[m, n)`. `range(m; n; step)` strides.
+fn range(args: &[Expr], input: Value, env: &Env) -> Stream {
+    let evaluated: Result<Vec<f64>, _> = args
+        .iter()
+        .map(|a| match eval::eval_expr(a, input.clone(), env).next() {
+            Some(Ok(Value::Number(n))) => Ok(n),
+            Some(Ok(other)) => Err(type_err("number", &other)),
+            Some(Err(e)) => Err(e),
+            None => Err(RunError::Other("range: empty argument stream".into())),
+        })
+        .collect();
+    let nums = match evaluated {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    let (start, stop, step) = match nums.as_slice() {
+        [n] => (0.0, *n, 1.0),
+        [m, n] => (*m, *n, 1.0),
+        [m, n, s] => (*m, *n, *s),
+        _ => return err(RunError::Other("range: 1..3 arguments".into())),
+    };
+    if step == 0.0 {
+        return err(RunError::Other("range: step cannot be zero".into()));
+    }
+    let mut values = Vec::new();
+    let mut x = start;
+    while (step > 0.0 && x < stop) || (step < 0.0 && x > stop) {
+        values.push(Value::Number(x));
+        x += step;
+    }
+    Box::new(values.into_iter().map(Ok))
+}
+
+/// `limit(n; f)` keeps the first `n` results of `f`.
+fn limit(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 2 {
+        return err(RunError::Other("limit/2 expects (count; expr)".into()));
+    }
+    let n = match eval::eval_expr(&args[0], input.clone(), env).next() {
+        Some(Ok(Value::Number(n))) => n as i64,
+        Some(Ok(other)) => return err(type_err("number", &other)),
+        Some(Err(e)) => return err(e),
+        None => 0,
+    };
+    if n <= 0 {
+        return Box::new(std::iter::empty());
+    }
+    let s = eval::eval_expr(&args[1], input, env);
+    let taken: Vec<_> = s.take(n as usize).collect();
+    Box::new(taken.into_iter())
+}
+
+/// `nth(n; f)` returns the nth output of `f` (0-indexed).
+fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
+    if args.len() != 2 {
+        return Err(RunError::Other("nth/2 expects (index; expr)".into()));
+    }
+    let n = match eval::eval_expr(&args[0], input.clone(), env).next() {
+        Some(Ok(Value::Number(n))) => n as i64,
+        Some(Ok(other)) => return Err(type_err("number", &other)),
+        Some(Err(e)) => return Err(e),
+        None => 0,
+    };
+    if n < 0 {
+        return Ok(Value::Null);
+    }
+    let mut s = eval::eval_expr(&args[1], input, env);
+    s.nth(n as usize).unwrap_or(Ok(Value::Null))
+}
+
+// ---- paths -----------------------------------------------------------------
+
+/// `paths` streams every non-empty path into `input` as an array of
+/// keys/indices. Mirrors jq.
+fn paths(input: Value) -> Stream {
+    let mut out = Vec::new();
+    collect_paths(&input, Vec::new(), &mut out);
+    Box::new(out.into_iter().map(|p| Ok(Value::Array(Arc::new(p)))))
+}
+
+fn collect_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {
+    match v {
+        Value::Array(a) => {
+            for (i, child) in a.iter().enumerate() {
+                let mut p = prefix.clone();
+                p.push(Value::from(i as i64));
+                out.push(p.clone());
+                collect_paths(child, p, out);
+            }
+        }
+        Value::Object(m) => {
+            for (k, child) in m.iter() {
+                let mut p = prefix.clone();
+                p.push(Value::from(k.clone()));
+                out.push(p.clone());
+                collect_paths(child, p, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `getpath(path)` walks an array of keys/indices into `input`.
+fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
+    let path = match eval::eval_expr(&args[0], input.clone(), env).next() {
+        Some(Ok(Value::Array(a))) => a,
+        Some(Ok(other)) => return Err(type_err("array of keys", &other)),
+        Some(Err(e)) => return Err(e),
+        None => return Ok(Value::Null),
+    };
+    let mut cur = input;
+    for step in path.iter() {
+        cur = match (&cur, step) {
+            (Value::Object(m), Value::String(k)) => m.get(k.as_ref()).cloned().unwrap_or(Value::Null),
+            (Value::Array(a), Value::Number(n)) => {
+                let i = *n as i64;
+                let idx = if i < 0 { a.len() as i64 + i } else { i };
+                if idx < 0 || idx as usize >= a.len() {
+                    Value::Null
+                } else {
+                    a[idx as usize].clone()
+                }
+            }
+            _ => Value::Null,
+        };
+    }
+    Ok(cur)
+}
+
+/// `setpath(path; value)` writes into a cloned `input`. Creates
+/// missing intermediate containers as jq does.
+fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
+    if args.len() != 2 {
+        return Err(RunError::Other("setpath/2 expects (path; value)".into()));
+    }
+    let path = match eval::eval_expr(&args[0], input.clone(), env).next() {
+        Some(Ok(Value::Array(a))) => a,
+        Some(Ok(other)) => return Err(type_err("array of keys", &other)),
+        Some(Err(e)) => return Err(e),
+        None => return Ok(input),
+    };
+    let value = match eval::eval_expr(&args[1], input.clone(), env).next() {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => return Err(e),
+        None => return Ok(input),
+    };
+    set_path_inner(input, path.as_ref(), value)
+}
+
+fn set_path_inner(root: Value, path: &[Value], value: Value) -> Result<Value, RunError> {
+    let Some((head, tail)) = path.split_first() else {
+        return Ok(value);
+    };
+    match head {
+        Value::String(key) => {
+            use std::collections::BTreeMap;
+            let mut map: BTreeMap<String, Value> = match root {
+                Value::Object(m) => (*m).clone(),
+                Value::Null => BTreeMap::new(),
+                other => return Err(type_err("object or null", &other)),
+            };
+            let child = map.remove(key.as_ref()).unwrap_or(Value::Null);
+            let replaced = set_path_inner(child, tail, value)?;
+            map.insert(key.to_string(), replaced);
+            Ok(Value::Object(Arc::new(map)))
+        }
+        Value::Number(n) => {
+            let mut arr: Vec<Value> = match root {
+                Value::Array(a) => (*a).clone(),
+                Value::Null => Vec::new(),
+                other => return Err(type_err("array or null", &other)),
+            };
+            let i = *n as i64;
+            let idx = if i < 0 { (arr.len() as i64 + i).max(0) } else { i } as usize;
+            while arr.len() <= idx {
+                arr.push(Value::Null);
+            }
+            arr[idx] = set_path_inner(arr[idx].clone(), tail, value)?;
+            Ok(Value::Array(Arc::new(arr)))
+        }
+        other => Err(type_err("string or number path step", other)),
+    }
+}
+
+
+// ---- markdown: toc ---------------------------------------------------------
+
+/// `toc` yields `[{level, text, anchor}, ...]` for every heading.
+fn toc(input: &Value) -> Value {
+    let mut headings = Vec::new();
+    collect_headings(input, &mut headings);
+    let entries: Vec<Value> = headings.into_iter().map(heading_to_entry).collect();
+    Value::Array(Arc::new(entries))
+}
+
+fn collect_headings(v: &Value, out: &mut Vec<Arc<Node>>) {
+    if let Value::Node(n) = v {
+        if n.kind == NodeKind::Heading {
+            out.push(n.clone());
+        }
+        for c in &n.children {
+            collect_headings(c, out);
+        }
+    }
+}
+
+/// `node(obj)` lifts an object of shape
+/// `{kind, <attrs>..., children?}` into a freshly constructed Node.
+/// Unknown `.kind` strings default to `paragraph`. The result is
+/// dirty so serialize regenerates it.
+fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
+    let source = if args.is_empty() {
+        input
+    } else {
+        eval::eval_expr(&args[0], input, env)
+            .next()
+            .unwrap_or(Ok(Value::Null))?
+    };
+    let Value::Object(map) = source else {
+        return Err(type_err("object", &source));
+    };
+    let kind = match map.get("kind") {
+        Some(Value::String(s)) => kind_from_str(s).unwrap_or(NodeKind::Paragraph),
+        _ => NodeKind::Paragraph,
+    };
+    let mut node = Node::new(kind);
+    for (k, v) in map.iter() {
+        if k == "kind" || k == "children" {
+            continue;
+        }
+        if let Some(key) = attr::by_name(k) {
+            node = node.with_attr(key, v.clone());
+        }
+    }
+    if let Some(Value::Array(arr)) = map.get("children") {
+        node.children.clone_from(arr);
+    }
+    node.dirty = true;
+    Ok(Value::Node(Arc::new(node)))
+}
+
+fn kind_from_str(s: &str) -> Option<NodeKind> {
+    Some(match s {
+        "root" => NodeKind::Root,
+        "heading" => NodeKind::Heading,
+        "paragraph" => NodeKind::Paragraph,
+        "code" => NodeKind::Code,
+        "quote" => NodeKind::Quote,
+        "list" => NodeKind::List,
+        "item" => NodeKind::Item,
+        "table" => NodeKind::Table,
+        "row" => NodeKind::Row,
+        "cell" => NodeKind::Cell,
+        "link" => NodeKind::Link,
+        "image" => NodeKind::Image,
+        "emphasis" => NodeKind::Emphasis,
+        "strong" => NodeKind::Strong,
+        "strikethrough" => NodeKind::Strikethrough,
+        "text" => NodeKind::Text,
+        "code_inline" => NodeKind::CodeInline,
+        "html" => NodeKind::Html,
+        "html_inline" => NodeKind::HtmlInline,
+        "break_soft" => NodeKind::BreakSoft,
+        "break_hard" => NodeKind::BreakHard,
+        "rule" => NodeKind::Rule,
+        "footnote_ref" => NodeKind::FootnoteRef,
+        "footnote_def" => NodeKind::FootnoteDef,
+        "section" => NodeKind::Section,
+        _ => return None,
+    })
+}
+
+/// `frontmatter` returns the parsed YAML/TOML metadata block, or
+/// `null` when the document has none.
+fn frontmatter(input: &Value) -> Value {
+    match input {
+        Value::Node(n) => n.attrs.get(attr::FRONTMATTER).cloned().unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
+fn heading_to_entry(node: Arc<Node>) -> Value {
+    use std::collections::BTreeMap;
+    let mut obj: BTreeMap<String, Value> = BTreeMap::new();
+    if let Some(level) = node.attrs.get(attr::LEVEL).cloned() {
+        obj.insert("level".into(), level);
+    }
+    obj.insert("text".into(), Value::from(plain_text(&node.children)));
+    if let Some(a) = node.attrs.get(attr::ANCHOR).cloned() {
+        obj.insert("anchor".into(), a);
+    }
+    Value::Object(Arc::new(obj))
+}
