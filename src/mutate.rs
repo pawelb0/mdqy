@@ -7,9 +7,9 @@
 //!   <mut1> | <mut2> | <mut3>       // pipe-chained
 //! ```
 //!
-//! Structural mutation (`children |=`, `walk(f)`, insertions) is not
-//! wired up yet. Attribute mutation alone covers the "rewrite all
-//! http:// to https://" case, which is the headline use.
+//! Tree-shape edits (`children |=`, node insertion, node deletion)
+//! aren't wired up yet. Attribute mutation covers the common case,
+//! e.g. rewriting every `http://` link to `https://`.
 //!
 //! The serializer in `emit::md` copies clean subtrees byte-for-byte
 //! and only regenerates dirty ones, so a link rewrite touches just
