@@ -46,3 +46,6 @@ off a path dependency.
 - `[]` literal is the empty array.
 - mdcat path dependency swapped for the published `mdcat-ng` on
   crates.io.
+- `>` selector combinator. `# Install > codeblocks:first` scopes the
+  right-hand side into the section selected on the left. Coexists
+  with `>` as the greater-than operator on scalar expressions.

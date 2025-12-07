@@ -221,6 +221,28 @@ fn node_constructor_round_trips_kind() {
     assert_eq!(render(&out[0]), "heading");
 }
 
+/// `>` combinator scopes into the current heading's section and
+/// doesn't hijack the `>` comparison operator.
+#[test]
+fn selector_combinator_and_gt_both_work() {
+    let src = "# Install\n\n## Linux\n\n```sh\napt\n```\n\n## Macos\n\n```sh\nbrew\n```\n";
+    // Combinator picks the right code block.
+    let out: Vec<_> = compile("# Install > codeblocks:first | .literal")
+        .run_tree(&parse(src))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(out, ["apt\n"]);
+
+    // `>` between scalars still means greater-than.
+    let out: Vec<_> = compile("5 > 3")
+        .run_with_env(Value::Null, mdqy::Env::default())
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(out, ["true"]);
+}
+
 /// `# Title` sugar desugars to `section("Title")`.
 #[test]
 fn hash_selector_matches_section() {

@@ -30,21 +30,42 @@ pub fn parse(tokens: &[Spanned<'_>]) -> Result<Expr, CompileError> {
     let mut p = Parser::new(tokens);
     let expr = p.parse_top()?;
     p.expect_eof()?;
-    Ok(expr)
+    // If the query used `>` combinators, the desugaring references
+    // `$__root` so `section(...)` can run against the original root
+    // instead of whichever node the chain flowed into. Bind it here.
+    if p.chain_var > 0 {
+        Ok(Expr::As {
+            bind: Box::new(Expr::Identity),
+            name: Arc::from("__root"),
+            body: Box::new(expr),
+        })
+    } else {
+        Ok(expr)
+    }
 }
 
 struct Parser<'t, 's> {
     toks: &'t [Spanned<'s>],
     pos: usize,
+    /// Counter for fresh `$__tN` binding names used by the `>`
+    /// selector combinator desugaring.
+    chain_var: usize,
 }
 
 impl<'t, 's> Parser<'t, 's> {
     fn new(toks: &'t [Spanned<'s>]) -> Self {
-        Self { toks, pos: 0 }
+        Self { toks, pos: 0, chain_var: 0 }
     }
 
     fn peek(&self) -> &Tok<'s> {
         &self.toks[self.pos].tok
+    }
+
+    /// Look `n` tokens ahead without consuming. Used by the selector
+    /// chain parser to decide whether a `>` is a combinator or the
+    /// greater-than operator.
+    fn peek_n(&self, n: usize) -> &Tok<'s> {
+        &self.toks[(self.pos + n).min(self.toks.len() - 1)].tok
     }
 
     fn peek_offset(&self) -> usize {
@@ -315,10 +336,57 @@ impl<'t, 's> Parser<'t, 's> {
                     self.advance();
                     lhs = self.apply_pseudo(lhs, pseudo)?;
                 }
+                // `>` as a selector combinator. Only when followed by
+                // another selector origin; otherwise it stays for
+                // parse_cmp to read as `Gt`.
+                Tok::Gt if looks_like_selector_start(self.peek_n(1)) => {
+                    self.advance();
+                    let rhs = self.parse_postfix()?;
+                    lhs = self.combine_sections(lhs, rhs);
+                }
                 _ => break,
             }
         }
         Ok(lhs)
+    }
+
+    /// Desugar `lhs > rhs` into
+    /// `lhs | [headings] | .[0] | .text as $__tN | $__root | section($__tN) | rhs`.
+    ///
+    /// `[headings] | .[0]` normalises whatever `lhs` produced (heading
+    /// directly, or section containing one) to the first heading, so
+    /// `.text` always reads the title. `$__root` is bound at parse-top
+    /// when any combinator appears.
+    fn combine_sections(&mut self, lhs: Expr, rhs: Expr) -> Expr {
+        let var = Arc::<str>::from(format!("__t{}", self.chain_var));
+        self.chain_var += 1;
+
+        let first_heading = Expr::Pipe(
+            Box::new(Expr::ArrayCtor(Box::new(Expr::Call {
+                name: Arc::from("headings"),
+                args: Vec::new(),
+            }))),
+            Box::new(Expr::Index(Box::new(Expr::Lit(Literal::Number(0.0))))),
+        );
+
+        let section_call = Expr::Call {
+            name: Arc::from("section"),
+            args: vec![Expr::Var(var.clone())],
+        };
+        let body_tail = Expr::Pipe(
+            Box::new(Expr::Var(Arc::from("__root"))),
+            Box::new(Expr::Pipe(Box::new(section_call), Box::new(rhs))),
+        );
+        let binding = Expr::As {
+            bind: Box::new(Expr::Field(Arc::from("text"))),
+            name: var,
+            body: Box::new(body_tail),
+        };
+
+        Expr::Pipe(
+            Box::new(lhs),
+            Box::new(Expr::Pipe(Box::new(first_heading), Box::new(binding))),
+        )
     }
 
     /// Selector pseudos desugar inline:
@@ -709,6 +777,21 @@ impl<'t, 's> Parser<'t, 's> {
 
 fn describe(tok: &Tok<'_>) -> String {
     format!("{tok:?}")
+}
+
+/// Recognise tokens that open a selector segment. Used by the `>`
+/// combinator to distinguish `heading > codeblocks` from `x > 5`.
+fn looks_like_selector_start(tok: &Tok<'_>) -> bool {
+    matches!(
+        tok,
+        Tok::Hash(_)
+            | Tok::Ident(
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                | "headings" | "paragraphs" | "codeblocks" | "code"
+                | "links" | "images" | "items" | "lists" | "tables"
+                | "blockquotes" | "footnotes"
+            )
+    )
 }
 
 /// `section("title")` as an Expr. Used by the `#`-selector shorthand.
