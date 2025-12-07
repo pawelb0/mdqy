@@ -12,8 +12,7 @@ cargo install --path . --features tty
 ```
 
 The `tty` feature pulls mdcat in so results can render to the
-terminal. Skip it if you only need JSON / markdown output. Default
-build stays at ~15 crates.
+terminal. Skip it if you only need JSON or markdown output.
 
 ## Usage
 
@@ -83,23 +82,9 @@ See `docs.rs` for the full API.
 
 ## Tooling
 
-Generate shell completions:
-
 ```sh
 cargo run --example gen_completions -- bash > mdqy.bash
-cargo run --example gen_completions -- zsh  > _mdqy
-cargo run --example gen_completions -- fish > mdqy.fish
-```
-
-Emit a man page:
-
-```sh
 cargo run --example gen_manpage > mdqy.1
-```
-
-Export the Node JSON schema:
-
-```sh
 cargo run --example export_schema --features schema-export > node.schema.json
 ```
 
