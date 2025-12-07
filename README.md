@@ -1,8 +1,7 @@
 # mdqy
 
 jq for markdown. Query markdown documents with a hybrid selector +
-jq-style DSL. Rewrite them in place. Render to a terminal through
-mdcat.
+jq-style DSL. Rewrite them in place. Pretty render to a terminal.
 
 ## Install
 
@@ -35,6 +34,7 @@ mdqy 'h1:first | .text' README.md        # first H1
 mdqy 'codeblocks | .lang' README.md      # languages of fenced blocks
 mdqy 'links | .href' README.md
 mdqy 'section("Install")' README.md      # the Install section back out
+mdqy '# Install > codeblocks:first | .literal' tutorial.md  # combinator
 mdqy '.. | select(type == "heading")' README.md
 ```
 
@@ -42,7 +42,7 @@ mdqy '.. | select(type == "heading")' README.md
 
 Default is `auto`:
 
-- stdout is a terminal + `tty` feature compiled in → render via mdcat
+- stdout is a terminal + `tty` feature compiled in → render
 - stdout is piped → raw markdown (Node results) or JSON (scalars)
 
 Override with `--output md | json | tty | text`.
