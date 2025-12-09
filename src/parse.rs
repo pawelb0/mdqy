@@ -406,11 +406,11 @@ impl<'t, 's> Parser<'t, 's> {
                 Ok(wrap_index(lhs, k))
             }
             "lang" => {
-                let rhs = self.parse_paren_arg("`:lang`")?;
+                let rhs = self.parse_ident_or_string_arg("`:lang`")?;
                 Ok(select_on_field_eq(lhs, "lang", rhs))
             }
             "text" => {
-                let rhs = self.parse_paren_arg("`:text`")?;
+                let rhs = self.parse_ident_or_string_arg("`:text`")?;
                 Ok(select_on_field_eq(lhs, "text", rhs))
             }
             other => Err(CompileError::Selector {
@@ -471,6 +471,31 @@ impl<'t, 's> Parser<'t, 's> {
         }
         self.advance();
         let arg = self.parse_pipeline_no_comma()?;
+        if !matches!(self.peek(), Tok::RParen) {
+            return self.err("`)`");
+        }
+        self.advance();
+        Ok(arg)
+    }
+
+    /// Like `parse_paren_arg`, but a bare ident in the arg slot is
+    /// read as its string literal. Used by `:lang(rust)` / `:text(foo)`,
+    /// where the ident would otherwise dispatch as a builtin.
+    fn parse_ident_or_string_arg(&mut self, label: &str) -> Result<Expr, CompileError> {
+        if !matches!(self.peek(), Tok::LParen) {
+            return self.err(&format!("`(` after {label}"));
+        }
+        self.advance();
+        let arg = if let Tok::Ident(name) = self.peek().clone() {
+            if matches!(self.peek_n(1), Tok::RParen) {
+                self.advance();
+                Expr::Lit(Literal::String(Arc::from(name)))
+            } else {
+                self.parse_pipeline_no_comma()?
+            }
+        } else {
+            self.parse_pipeline_no_comma()?
+        };
         if !matches!(self.peek(), Tok::RParen) {
             return self.err("`)`");
         }
