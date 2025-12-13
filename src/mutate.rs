@@ -48,20 +48,16 @@ fn apply_expr(expr: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {
         Expr::Assign(_, AssignOp::Set, _) => Err(RunError::NotImplemented {
             feature: "`=` (use `|=`); v1 only supports update-style assignment",
         }),
-        Expr::Delete(path) => apply_delete(path, root),
-        // `del(...)` is parsed as a Call; intercept here because it has
-        // mutation semantics, unlike every other builtin.
+        // `del(...)` and `walk(...)` parse as calls but carry mutation
+        // semantics, so the write path intercepts them here.
         Expr::Call { name, args } if name.as_ref() == "del" && args.len() == 1 => {
             apply_delete(&args[0], root)
         }
-        // `walk(f)` likewise intercepts. Post-order: children recurse
-        // first, then `f` runs against the updated node.
         Expr::Call { name, args } if name.as_ref() == "walk" && args.len() == 1 => {
             walk_tree(&args[0], root)
         }
-        // Read-only subexpressions before a mutation are no-ops here.
-        // Think `(headings) | ... |= f` where the `(headings)` side
-        // exists for its results, not for mutation. Drop it.
+        // Read-only subexpressions to the left of a mutation exist for
+        // their results, not for their side effects. Drop them.
         _ => Ok(root),
     }
 }
@@ -150,20 +146,6 @@ fn apply_walk_f(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
             }
         }
     }
-}
-
-#[allow(dead_code)]
-/// Conservative identity: same kind, same-length children, each child
-/// shares an `Arc` with its counterpart. Not a deep equals; good
-/// enough to detect "`f` didn't touch this node" without requiring
-/// `Value` to implement `PartialEq` (it can't, `f64` blocks it).
-fn nodes_equal(a: &Node, b: &Node) -> bool {
-    a.kind == b.kind
-        && a.children.len() == b.children.len()
-        && a.children.iter().zip(b.children.iter()).all(|(x, y)| match (x, y) {
-            (Value::Node(xn), Value::Node(yn)) => Arc::ptr_eq(xn, yn),
-            _ => false,
-        })
 }
 
 fn apply_update(lhs: &Expr, rhs: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {

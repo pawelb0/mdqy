@@ -193,7 +193,7 @@ pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
             let new_env = env.clone().with_func(name, f);
             eval(rest, input, &new_env)
         }
-        Expr::Assign(..) | Expr::Delete(_) => once(Err(RunError::NotImplemented {
+        Expr::Assign(..) => once(Err(RunError::NotImplemented {
             feature: "mutation runs via Query::transform_bytes",
         })),
     }

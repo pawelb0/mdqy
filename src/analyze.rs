@@ -102,7 +102,7 @@ pub fn plan(expr: &Expr) -> Option<StreamPlan> {
 #[must_use]
 pub fn has_mutation(expr: &Expr) -> bool {
     match expr {
-        Expr::Assign(..) | Expr::Delete(..) => true,
+        Expr::Assign(..) => true,
         Expr::Call { name, args } => {
             matches!(name.as_ref(), "walk" | "del") || args.iter().any(has_mutation)
         }

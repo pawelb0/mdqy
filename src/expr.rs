@@ -50,11 +50,7 @@ pub enum Expr {
     Call { name: Arc<str>, args: Vec<Expr> },
     Try(Box<Expr>),
     Assign(Box<Expr>, AssignOp, Box<Expr>),
-    /// Reserved. `del(...)` goes through `Call { name: "del" }` today;
-    /// [`crate::mutate`] recognises the call and does the work.
-    #[allow(dead_code)]
-    Delete(Box<Expr>),
-    /// `expr as $x | rest` — bind each output of `expr` to `$x`
+    /// `expr as $x | rest`. Binds each output of `expr` to `$x`
     /// inside `rest`.
     As { bind: Box<Expr>, name: Arc<str>, body: Box<Expr> },
     /// `reduce SRC as $x (INIT; UPDATE)` — fold `SRC` into a single
