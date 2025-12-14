@@ -938,7 +938,7 @@ fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError>
         return Err(type_err("object", &source));
     };
     let kind = match map.get("kind") {
-        Some(Value::String(s)) => kind_from_str(s).unwrap_or(NodeKind::Paragraph),
+        Some(Value::String(s)) => NodeKind::from_name(s).unwrap_or(NodeKind::Paragraph),
         _ => NodeKind::Paragraph,
     };
     let mut node = Node::new(kind);
@@ -955,37 +955,6 @@ fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError>
     }
     node.dirty = true;
     Ok(Value::Node(Arc::new(node)))
-}
-
-fn kind_from_str(s: &str) -> Option<NodeKind> {
-    Some(match s {
-        "root" => NodeKind::Root,
-        "heading" => NodeKind::Heading,
-        "paragraph" => NodeKind::Paragraph,
-        "code" => NodeKind::Code,
-        "quote" => NodeKind::Quote,
-        "list" => NodeKind::List,
-        "item" => NodeKind::Item,
-        "table" => NodeKind::Table,
-        "row" => NodeKind::Row,
-        "cell" => NodeKind::Cell,
-        "link" => NodeKind::Link,
-        "image" => NodeKind::Image,
-        "emphasis" => NodeKind::Emphasis,
-        "strong" => NodeKind::Strong,
-        "strikethrough" => NodeKind::Strikethrough,
-        "text" => NodeKind::Text,
-        "code_inline" => NodeKind::CodeInline,
-        "html" => NodeKind::Html,
-        "html_inline" => NodeKind::HtmlInline,
-        "break_soft" => NodeKind::BreakSoft,
-        "break_hard" => NodeKind::BreakHard,
-        "rule" => NodeKind::Rule,
-        "footnote_ref" => NodeKind::FootnoteRef,
-        "footnote_def" => NodeKind::FootnoteDef,
-        "section" => NodeKind::Section,
-        _ => return None,
-    })
 }
 
 /// `frontmatter` returns the parsed YAML/TOML metadata block, or

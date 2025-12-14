@@ -44,35 +44,45 @@ impl NodeKind {
     /// Lowercase name used in JSON output and `.kind == "..."` tests.
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Root => "root",
-            Self::Heading => "heading",
-            Self::Paragraph => "paragraph",
-            Self::Code => "code",
-            Self::Quote => "quote",
-            Self::List => "list",
-            Self::Item => "item",
-            Self::Table => "table",
-            Self::Row => "row",
-            Self::Cell => "cell",
-            Self::Link => "link",
-            Self::Image => "image",
-            Self::Emphasis => "emphasis",
-            Self::Strong => "strong",
-            Self::Strikethrough => "strikethrough",
-            Self::Text => "text",
-            Self::CodeInline => "code_inline",
-            Self::Html => "html",
-            Self::HtmlInline => "html_inline",
-            Self::BreakSoft => "break_soft",
-            Self::BreakHard => "break_hard",
-            Self::Rule => "rule",
-            Self::FootnoteRef => "footnote_ref",
-            Self::FootnoteDef => "footnote_def",
-            Self::Section => "section",
-        }
+        KIND_NAMES.iter().find(|(_, k)| *k == self).map_or("unknown", |(s, _)| *s)
+    }
+
+    /// Inverse of [`Self::as_str`]. `None` for unknown names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        KIND_NAMES.iter().find(|(s, _)| *s == name).map(|(_, k)| *k)
     }
 }
+
+/// Canonical (name, variant) table. One row per `NodeKind`, used by
+/// both `as_str` and `from_name` so they can't drift.
+const KIND_NAMES: &[(&str, NodeKind)] = &[
+    ("root", NodeKind::Root),
+    ("heading", NodeKind::Heading),
+    ("paragraph", NodeKind::Paragraph),
+    ("code", NodeKind::Code),
+    ("quote", NodeKind::Quote),
+    ("list", NodeKind::List),
+    ("item", NodeKind::Item),
+    ("table", NodeKind::Table),
+    ("row", NodeKind::Row),
+    ("cell", NodeKind::Cell),
+    ("link", NodeKind::Link),
+    ("image", NodeKind::Image),
+    ("emphasis", NodeKind::Emphasis),
+    ("strong", NodeKind::Strong),
+    ("strikethrough", NodeKind::Strikethrough),
+    ("text", NodeKind::Text),
+    ("code_inline", NodeKind::CodeInline),
+    ("html", NodeKind::Html),
+    ("html_inline", NodeKind::HtmlInline),
+    ("break_soft", NodeKind::BreakSoft),
+    ("break_hard", NodeKind::BreakHard),
+    ("rule", NodeKind::Rule),
+    ("footnote_ref", NodeKind::FootnoteRef),
+    ("footnote_def", NodeKind::FootnoteDef),
+    ("section", NodeKind::Section),
+];
 
 /// Byte range into the parsed source. Used by the md serializer to
 /// copy clean subtrees verbatim.
