@@ -51,10 +51,8 @@ pub enum Tok<'a> {
     Ge,
 
     /// `#`..`######`. The `u8` is the heading level (1..=6).
-    #[allow(dead_code)]
     Hash(u8),
     /// `:first`, `:last`, `:nth`, `:text`, `:lang`. Ident after the colon.
-    #[allow(dead_code)]
     ColonIdent(&'a str),
 
     // Literals & identifiers
@@ -96,8 +94,6 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
             i += 1;
             continue;
         }
-
-        // `#` opens a heading selector. mdqy has no line comments.
 
         // Two-char punct first; otherwise a trailing `=` would get eaten.
         let two = [c, bytes.get(i + 1).copied().unwrap_or(0)];
