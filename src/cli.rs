@@ -279,26 +279,9 @@ fn build_env(args: &Args) -> anyhow::Result<crate::Env> {
     for pair in args.argjson.chunks_exact(2) {
         let json: serde_json::Value = serde_json::from_str(&pair[1])
             .map_err(|e| anyhow::anyhow!("--argjson {}: {e}", pair[0]))?;
-        env = env.with(pair[0].clone(), json_to_value(json));
+        env = env.with(pair[0].clone(), json::value_from_json(json));
     }
     Ok(env)
-}
-
-fn json_to_value(j: serde_json::Value) -> Value {
-    use serde_json::Value as J;
-    match j {
-        J::Null => Value::Null,
-        J::Bool(b) => Value::Bool(b),
-        J::Number(n) => Value::Number(n.as_f64().unwrap_or(f64::NAN)),
-        J::String(s) => Value::from(s),
-        J::Array(arr) => {
-            Value::Array(std::sync::Arc::new(arr.into_iter().map(json_to_value).collect()))
-        }
-        J::Object(map) => {
-            let converted = map.into_iter().map(|(k, v)| (k, json_to_value(v))).collect();
-            Value::Object(std::sync::Arc::new(converted))
-        }
-    }
 }
 
 /// Drive the result iterator into the writer. `path` is set when the

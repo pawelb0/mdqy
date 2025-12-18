@@ -69,7 +69,7 @@ fn value_to_line(v: &Value) -> String {
         _ => {
             let json = crate::emit::json::value_to_json(
                 v,
-                crate::emit::json::JsonOptions { compact: true, include_spans: false },
+                crate::emit::json::JsonOptions::COMPACT,
             );
             serde_json::to_string(&json).unwrap_or_default()
         }

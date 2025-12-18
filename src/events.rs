@@ -413,7 +413,7 @@ fn attach_frontmatter(root: &mut Node, source: &str) {
         _ => None,
     };
     if let Some(json) = parsed {
-        root.attrs.insert(attr::FRONTMATTER, json_to_value(json));
+        root.attrs.insert(attr::FRONTMATTER, crate::emit::json::value_from_json(json));
     }
 }
 
@@ -422,21 +422,6 @@ fn strip_fences(body: &str) -> &str {
     let trimmed = body.trim_matches('\n');
     let after_open = trimmed.split_once('\n').map_or("", |(_, rest)| rest);
     after_open.rsplit_once('\n').map_or(after_open, |(prefix, _)| prefix)
-}
-
-fn json_to_value(j: serde_json::Value) -> Value {
-    use serde_json::Value as J;
-    match j {
-        J::Null => Value::Null,
-        J::Bool(b) => Value::Bool(b),
-        J::Number(n) => Value::Number(n.as_f64().unwrap_or(f64::NAN)),
-        J::String(s) => Value::from(s),
-        J::Array(a) => Value::Array(Arc::new(a.into_iter().map(json_to_value).collect())),
-        J::Object(m) => {
-            let converted = m.into_iter().map(|(k, v)| (k, json_to_value(v))).collect();
-            Value::Object(Arc::new(converted))
-        }
-    }
 }
 
 #[cfg(test)]

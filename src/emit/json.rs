@@ -23,6 +23,12 @@ pub struct JsonOptions {
     pub include_spans: bool,
 }
 
+impl JsonOptions {
+    /// Compact, no spans. Used by `tostring`, `tojson`, and fallback
+    /// serialisation in the md and tty emitters.
+    pub const COMPACT: Self = Self { compact: true, include_spans: false };
+}
+
 /// Emit one value as JSON, followed by a newline.
 pub fn emit<W: io::Write>(writer: &mut W, value: &Value, opts: JsonOptions) -> Result<(), RunError> {
     let json = value_to_json(value, opts);
@@ -34,6 +40,25 @@ pub fn emit<W: io::Write>(writer: &mut W, value: &Value, opts: JsonOptions) -> R
     result.map_err(|e| RunError::Io(e.to_string()))?;
     writer.write_all(b"\n")?;
     Ok(())
+}
+
+/// Convert a `serde_json::Value` into an mdqy `Value`. Used when a
+/// builtin (`fromjson`, `--argjson`) or metadata parser hands us
+/// JSON that the rest of the pipeline expects as `Value`.
+#[must_use]
+pub fn value_from_json(j: J) -> Value {
+    use std::sync::Arc;
+    match j {
+        J::Null => Value::Null,
+        J::Bool(b) => Value::Bool(b),
+        J::Number(n) => Value::Number(n.as_f64().unwrap_or(f64::NAN)),
+        J::String(s) => Value::from(s),
+        J::Array(a) => Value::Array(Arc::new(a.into_iter().map(value_from_json).collect())),
+        J::Object(m) => {
+            let converted = m.into_iter().map(|(k, v)| (k, value_from_json(v))).collect();
+            Value::Object(Arc::new(converted))
+        }
+    }
 }
 
 /// Convert a `Value` to a `serde_json::Value` in the published shape.

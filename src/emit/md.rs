@@ -29,7 +29,7 @@ pub fn emit<W: io::Write>(writer: &mut W, source: &str, value: &Value) -> Result
         other => {
             let json = crate::emit::json::value_to_json(
                 other,
-                crate::emit::json::JsonOptions { compact: true, include_spans: false },
+                crate::emit::json::JsonOptions::COMPACT,
             );
             serde_json::to_writer(&mut *writer, &json).map_err(|e| RunError::Io(e.to_string()))?;
             writer.write_all(b"\n")?;

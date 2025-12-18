@@ -423,7 +423,7 @@ fn to_string_value(v: &Value) -> Result<Value, RunError> {
         Value::Array(_) | Value::Object(_) => {
             let json = crate::emit::json::value_to_json(
                 v,
-                crate::emit::json::JsonOptions { compact: true, include_spans: false },
+                crate::emit::json::JsonOptions::COMPACT,
             );
             Value::from(serde_json::to_string(&json).unwrap_or_default())
         }
@@ -581,7 +581,7 @@ fn value_contains(haystack: &Value, needle: &Value) -> bool {
 fn to_json(input: &Value) -> Result<Value, RunError> {
     let json = crate::emit::json::value_to_json(
         input,
-        crate::emit::json::JsonOptions { compact: true, include_spans: false },
+        crate::emit::json::JsonOptions::COMPACT,
     );
     Ok(Value::from(serde_json::to_string(&json).unwrap_or_default()))
 }
@@ -590,22 +590,7 @@ fn from_json(input: &Value) -> Result<Value, RunError> {
     let s = expect_string(input)?;
     let j: serde_json::Value = serde_json::from_str(s)
         .map_err(|e| RunError::Other(format!("fromjson: {e}")))?;
-    Ok(json_to_value(j))
-}
-
-fn json_to_value(j: serde_json::Value) -> Value {
-    use serde_json::Value as J;
-    match j {
-        J::Null => Value::Null,
-        J::Bool(b) => Value::Bool(b),
-        J::Number(n) => Value::Number(n.as_f64().unwrap_or(f64::NAN)),
-        J::String(s) => Value::from(s),
-        J::Array(a) => Value::Array(Arc::new(a.into_iter().map(json_to_value).collect())),
-        J::Object(m) => {
-            let converted = m.into_iter().map(|(k, v)| (k, json_to_value(v))).collect();
-            Value::Object(Arc::new(converted))
-        }
-    }
+    Ok(crate::emit::json::value_from_json(j))
 }
 
 fn env_as_value() -> Value {
