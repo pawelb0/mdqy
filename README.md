@@ -63,7 +63,7 @@ diff and exits 0 whether or not anything changed.
 
 ```sh
 mdqy 'headings | .text' docs/           # per-file by default
-mdqy --slurp '.[].headings | length' docs/
+mdqy --slurp '[.[] | headings | .text] | length' docs/
 mdqy --merge 'codeblocks | select(.lang == "rust")' docs/
 ```
 
@@ -78,7 +78,8 @@ for v in q.run_tree(&parse(source)) {
 }
 ```
 
-See `docs.rs` for the full API.
+See `docs.rs` for the full API, and [`docs/`](docs/) for how the
+pieces fit together.
 
 ## Tooling
 
