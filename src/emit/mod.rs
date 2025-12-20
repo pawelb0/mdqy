@@ -8,10 +8,9 @@ pub mod tty;
 
 /// Output format. Also the `--output` CLI enum.
 ///
-/// `Auto` is the default. The CLI resolves it per invocation: when
-/// stdout is a terminal and the `tty` feature is compiled in, it
-/// renders through mdcat; otherwise it emits markdown. This keeps
-/// interactive use nice while leaving scripted pipes untouched.
+/// The CLI resolves `Auto` per invocation. With `tty` compiled in
+/// and stdout on a terminal, it renders through mdcat; otherwise it
+/// emits markdown. Scripted pipes stay as machine-readable output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum OutputFormat {
     /// Pick between `md` and `tty` based on stdout.

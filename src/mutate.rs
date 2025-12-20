@@ -97,10 +97,10 @@ fn walk_tree(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
     Ok(updated)
 }
 
-/// Mini-interpreter for `walk(f)`'s body. The eval in `crate::eval`
-/// rejects `Assign`/`Delete` at compile time, so walk brings its own
-/// mutation-aware walker. Read-only forms delegate to the normal
-/// evaluator and expect a Node-valued result.
+/// Mini-interpreter for `walk(f)`'s body. `crate::eval` rejects
+/// mutation operators outright, so walk needs its own evaluator for
+/// them. Read-only forms delegate back to the normal evaluator and
+/// expect a Node-valued result.
 fn apply_walk_f(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
     match f {
         Expr::Identity => Ok(node),

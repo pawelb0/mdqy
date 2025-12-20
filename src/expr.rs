@@ -53,18 +53,18 @@ pub enum Expr {
     /// `expr as $x | rest`. Binds each output of `expr` to `$x`
     /// inside `rest`.
     As { bind: Box<Expr>, name: Arc<str>, body: Box<Expr> },
-    /// `reduce SRC as $x (INIT; UPDATE)` — fold `SRC` into a single
-    /// value, starting from `INIT` and replacing it with each
-    /// `UPDATE` output per element.
+    /// `reduce SRC as $x (INIT; UPDATE)`. Folds `SRC` into one value,
+    /// starting at `INIT` and replacing the accumulator with each
+    /// `UPDATE` output.
     Reduce {
         source: Box<Expr>,
         var: Arc<str>,
         init: Box<Expr>,
         update: Box<Expr>,
     },
-    /// `foreach SRC as $x (INIT; UPDATE; EXTRACT)` — like `reduce`
-    /// but yields `EXTRACT(acc)` per iteration instead of the final
-    /// accumulator.
+    /// `foreach SRC as $x (INIT; UPDATE; EXTRACT)`. Same fold as
+    /// `Reduce`, but yields `EXTRACT(acc)` at every step instead of
+    /// only the final accumulator.
     Foreach {
         source: Box<Expr>,
         var: Arc<str>,
@@ -72,9 +72,9 @@ pub enum Expr {
         update: Box<Expr>,
         extract: Box<Expr>,
     },
-    /// `def name(params): body;` — user-defined function. The body
-    /// runs with each `param` available as a filter bound to the
-    /// corresponding argument at call site.
+    /// `def name(params): body;`. User-defined function. Each `param`
+    /// is available inside `body` as a filter bound to the
+    /// corresponding call-site argument.
     Def {
         name: Arc<str>,
         params: Vec<Arc<str>>,

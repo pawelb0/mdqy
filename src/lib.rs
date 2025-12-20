@@ -42,11 +42,8 @@ pub use value::Value;
 
 use pulldown_cmark::Event;
 
-/// Compiled query.
-///
-/// Lex + parse happens once in [`Query::compile`]; the dispatch mode
-/// (stream vs tree) is picked then and cached. Clones are cheap, so
-/// pass by value in pipelines.
+/// Compiled query. Lex, parse, and dispatch-mode selection all run
+/// once in [`Query::compile`]; runners only walk the cached AST.
 #[derive(Debug, Clone)]
 pub struct Query {
     pub(crate) expr: expr::Expr,

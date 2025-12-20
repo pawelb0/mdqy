@@ -22,8 +22,8 @@ pub enum Value {
 
 impl Value {
     /// jq-compatible `type` string. Nodes return their kind
-    /// (`"heading"`, `"code"`, ...) so `.. | select(type == "heading")`
-    /// does what the user expects.
+    /// (`"heading"`, `"code"`, ...) so `select(type == "heading")`
+    /// works without a separate predicate.
     #[must_use]
     pub fn type_name(&self) -> &'static str {
         match self {

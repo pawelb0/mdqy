@@ -16,8 +16,8 @@
 //! ```
 //!
 //! Selector-shortcut pseudos (`:first`, `:nth(k)`, `:lang(x)`) are
-//! handled in `parse_postfix` and desugar to plain jq right there —
-//! no separate desugar pass.
+//! handled in `parse_postfix` and desugar to plain jq inline. No
+//! separate desugar pass.
 
 use std::sync::Arc;
 

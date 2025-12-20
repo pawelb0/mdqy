@@ -378,9 +378,8 @@ fn emit_value<W: io::Write>(
         Ok(())
     };
     match (format, value) {
-        // `Auto` is always resolved before `emit_value` runs, but we
-        // still need a branch to keep the match exhaustive. Mapping
-        // Auto to Md is the safe fallback if a caller ever forgets.
+        // `Auto` is resolved before emit_value runs. It still needs a
+        // branch to keep the match exhaustive, so pair it with Md.
         (OutputFormat::Auto | OutputFormat::Md, Value::Node(n)) => {
             crate::emit::md::serialize(out, source.as_bytes(), n)
                 .map_err(|e| anyhow::anyhow!("md emit: {e}"))?;
