@@ -1,9 +1,6 @@
-//! Directory walk that honours `.gitignore` and `.ignore`.
-//!
-//! Built on the `ignore` crate (same one ripgrep and fd use), so the
-//! rules are the ones users already know. Output is sorted by
-//! filename per directory, so runs are reproducible and diffs stay
-//! clean.
+//! Directory walk that honours `.gitignore` and `.ignore`, via the
+//! same `ignore` crate ripgrep and fd use. Output sorts by filename
+//! per directory for reproducible runs.
 
 use std::io;
 use std::path::{Path, PathBuf};

@@ -1,19 +1,15 @@
-//! Write path. Attribute-level mutation only, for now.
+//! Write path. Attribute-level mutation.
 //!
-//! Supported shapes:
+//! Shapes:
 //! ```text
-//!   <SELECTOR> | .<attr> |= <f>    // or equivalently <SELECTOR>.<attr> |= <f>
+//!   <SELECTOR> | .<attr> |= <f>    // or <SELECTOR>.<attr> |= <f>
 //!   del(<SELECTOR>.<attr>)
-//!   <mut1> | <mut2> | <mut3>       // pipe-chained
+//!   <mut1> | <mut2> | <mut3>
 //! ```
 //!
-//! Tree-shape edits (`children |=`, node insertion, node deletion)
-//! aren't wired up yet. Attribute mutation covers the common case,
-//! e.g. rewriting every `http://` link to `https://`.
-//!
-//! The serializer in `emit::md` copies clean subtrees byte-for-byte
-//! and only regenerates dirty ones, so a link rewrite touches just
-//! the link span in the output file.
+//! The serializer in `emit::md` byte-copies clean subtrees and
+//! regenerates only the dirty ones, so each mutation touches just
+//! its own span in the output.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -46,7 +42,7 @@ fn apply_expr(expr: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {
         }
         Expr::Assign(lhs, AssignOp::Update, rhs) => apply_update(lhs, rhs, root),
         Expr::Assign(_, AssignOp::Set, _) => Err(RunError::NotImplemented {
-            feature: "`=` (use `|=`); v1 only supports update-style assignment",
+            feature: "`=` assignment (use `|=`)",
         }),
         // `del(...)` and `walk(...)` parse as calls but carry mutation
         // semantics, so the write path intercepts them here.
@@ -181,11 +177,11 @@ fn split_attr_lhs(expr: &Expr) -> Result<(Expr, String), RunError> {
         Expr::Pipe(sel, tail) => match tail.as_ref() {
             Expr::Field(name) => Ok((sel.as_ref().clone(), name.to_string())),
             _ => Err(RunError::NotImplemented {
-                feature: "mutation target must end in `.<attr>` (v1 scope)",
+                feature: "mutation target must end in `.<attr>`",
             }),
         },
         _ => Err(RunError::NotImplemented {
-            feature: "mutation target shape not supported in v1",
+            feature: "unsupported mutation target shape",
         }),
     }
 }
@@ -202,9 +198,8 @@ fn collect_target_ptrs(selector: &Expr, root: &Arc<Node>) -> Result<HashSet<usiz
                 ptrs.insert(Arc::as_ptr(&n) as usize);
             }
             _ => {
-                // Non-Node target; unsupported for v1 attribute mutation.
                 return Err(RunError::NotImplemented {
-                    feature: "mutation target must resolve to Node values (v1 scope)",
+                    feature: "mutation target must resolve to Node values",
                 });
             }
         }

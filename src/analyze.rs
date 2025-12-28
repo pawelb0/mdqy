@@ -17,10 +17,9 @@ pub enum Mode {
     Tree,
 }
 
-/// Instructions for the stream runner.
-///
-/// We only accept the narrow shape `KIND_CALL | [select(.level == N) |] .ATTR`.
-/// That's the hot path: `headings | .text`, `codeblocks | .lang`,
+/// Instructions for the stream runner. Accepts the shape
+/// `KIND_CALL | [select(.level == N) |] .ATTR`, which covers the
+/// common read queries: `headings | .text`, `codeblocks | .lang`,
 /// `h1 | .text`, `headings | select(.level == 1) | .text`.
 #[derive(Debug, Clone)]
 pub struct StreamPlan {

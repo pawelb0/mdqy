@@ -318,7 +318,8 @@ fn lex_string(source: &str, start: usize) -> Result<(Cow<'_, str>, usize), Compi
                     b't' => buf.push('\t'),
                     b'r' => buf.push('\r'),
                     b'0' => buf.push('\0'),
-                    // `\(expr)` interpolation: pass through raw for now.
+                    // `\(expr)` interpolation passes through raw; the
+                    // parser doesn't interpolate yet.
                     b'(' => buf.push_str("\\("),
                     other => {
                         return Err(CompileError::Lex {

@@ -16,12 +16,9 @@ use crate::value::Value;
 
 type StreamItem = Result<Value, RunError>;
 
-/// Run a stream-eligible query.
-///
-/// `Query::run` only dispatches here after `analyze::choose_mode`
-/// said stream is safe. The `analyze::plan` re-check is defensive:
-/// if it ever disagrees with `choose_mode`, we surface a loud error
-/// instead of silently dropping results.
+/// Run a stream-eligible query. `analyze::choose_mode` gates the
+/// dispatch; the `analyze::plan` call here re-derives the plan and
+/// fails loud if the two ever disagree.
 pub fn run<'a, I>(
     expr: Expr,
     events: I,
@@ -103,8 +100,6 @@ where
             return;
         }
 
-        // `level_eq` only makes sense for headings. `analyze::plan`
-        // rejects the impossible combinations; this check is defensive.
         if let Some(expected) = self.plan.level_eq {
             if kind != NodeKind::Heading || heading_level(&tag) != expected {
                 return;

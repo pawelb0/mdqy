@@ -387,10 +387,9 @@ fn heading_level_i64(node: &Node) -> i64 {
     }
 }
 
-/// If the document starts with a `---`/`+++` metadata block, parse it
-/// as YAML / TOML and attach the result to `root.attrs[FRONTMATTER]`.
-/// Silently falls back to `Value::Null` on parse failure so bad
-/// frontmatter doesn't crash the pipeline.
+/// Parse any leading `---`/`+++` metadata block as YAML or TOML
+/// and attach it to `root.attrs[FRONTMATTER]`. Parse failure leaves
+/// the attr unset; the rest of the pipeline treats that as `null`.
 fn attach_frontmatter(root: &mut Node, source: &str) {
     let Some(metadata) = root.children.iter().find_map(|child| match child {
         Value::Node(n) if n.kind == NodeKind::Html => Some(n.clone()),
