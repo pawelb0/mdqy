@@ -24,8 +24,7 @@ If you pipe markdown in on stdin, the path argument is optional:
 cat README.md | mdqy '.'
 ```
 
-Start here. Identity. It prints the file back, byte-for-byte.
-That's also the simplest test that installation works.
+Identity. Prints the file back, byte-for-byte.
 
 ## Step 1. Pull something out
 

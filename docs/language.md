@@ -58,8 +58,8 @@ else c
 end
 ```
 
-`else` is optional. With no `else`, a false condition yields the
-input unchanged. Matches jq.
+`else` is optional; a false condition without one yields the input
+unchanged.
 
 ## Variables
 
@@ -97,8 +97,7 @@ a regex that won't compile, an index out of range).
 
 ## Assignment
 
-Only `|=` in v1, the update form. `=`, the set form, isn't
-implemented.
+Use `|=`, the update form. `=` (set) is not implemented.
 
 ```
 .href |= sub("http:"; "https:")
@@ -157,6 +156,7 @@ mdqy 'headings | .text'                 # every heading's plaintext
 mdqy '.. | select(type == "link") | .href'
 mdqy 'section("Install") | codeblocks | .lang'
 mdqy 'toc' README.md
-mdqy 'reduce (codeblocks | .lang) as $l ({}; .[$l // "none"] += 1)'
+mdqy 'reduce (codeblocks | .lang // "none") as $l ({};
+  setpath([$l]; (getpath([$l]) // 0) + 1))'
 mdqy 'def h(n): headings | select(.level == n); h(2) | .text'
 ```

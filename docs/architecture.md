@@ -44,12 +44,11 @@ Array(Arc<Vec<Value>>) | Object(Arc<BTreeMap<String, Value>>)
 Node(Arc<Node>)
 ```
 
-The `Node` variant is what lets markdown querying look like jq. Its
-`type_name()` returns `"heading"`, `"link"`, `"code"`, so
-`select(type == "heading")` works without a dedicated predicate
-builtin. Attribute access (`.level`, `.href`, `.text`) looks up a
-canonical static string key in `node.attrs`. `.children` projects
-the child `Value` vector.
+`Node::type_name()` returns `"heading"`, `"link"`, `"code"`, so
+`select(type == "heading")` doubles as a kind predicate. Attribute
+access (`.level`, `.href`, `.text`) looks up a canonical static
+string key in `node.attrs`. `.children` projects the child `Value`
+vector.
 
 ## Modules
 
@@ -82,11 +81,10 @@ evaluator optimises the common shallow read queries. Pulling every
 10 MB document has no reason to land in an `Arc<Node>` graph. We
 answer from the event iterator and stop.
 
-The predicate in `analyze::has_mutation` and `analyze::stage0` is
-conservative. Anything mutating, recursive, cross-stream, or
-variable-binding falls back to tree mode. A wrong positive would
-give corrupt results; a wrong negative is slower but correct. The
-differential test is the safety net for both.
+Anything mutating, recursive, cross-stream, or variable-binding
+falls back to tree mode. A wrong positive would give corrupt
+results; a wrong negative is slower but correct. The differential
+test in `tests/queries.rs` keeps both honest.
 
 ## Byte-exact round-trip
 
@@ -110,12 +108,11 @@ them. Only the link's span regenerates.
 
 ## The tty feature
 
-Rendering markdown to a terminal is `mdcat`'s job. We dep on
-`mdcat-ng` (the maintained fork on crates.io) behind the `tty`
-cargo feature. When a query result is a `Value::Node`, `emit::tty`
-calls `node_to_events_owned` to rebuild an `Event<'static>` stream
-and hands it to `mdcat::push_tty`. No markdown string is
-serialised and reparsed for the terminal path.
+Terminal rendering goes through `mdcat-ng`, optional behind the
+`tty` feature. For `Value::Node` results, `emit::tty` rebuilds an
+`Event<'static>` stream via `node_to_events_owned` and hands it to
+`mdcat::push_tty`. No markdown string is serialised and reparsed on
+the way out.
 
 Scalars print as plain lines. Auto-format picks `tty` when stdout
 is a terminal and the feature is compiled in, `md` or `json`

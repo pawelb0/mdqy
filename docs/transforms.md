@@ -1,10 +1,8 @@
 # Transforms
 
-mdqy's write path covers attribute-level edits. You can change a
-link's href, strip a title, bump heading levels, and anything else
-that lives in `Node::attrs`. Tree-shape edits (inserting a node,
-reordering children) aren't wired up in v1. `walk` plus `|=`
-covers the common rewrite cases.
+The write path covers attribute-level edits: a link's href, an
+image title, a heading level, anything stored in `Node::attrs`.
+`walk` plus `|=` handles the bulk of real rewrites.
 
 ## Operators
 
@@ -89,15 +87,8 @@ If anything fails before the rename, the original is untouched.
 
 ## What's not supported
 
-- `=`, the set-style assignment. Only `|=`, the update form.
-- Structural mutation. You can't replace `.children` wholesale.
-  `walk(f)` handles the cases that matter. A proper
-  `.children |= [...]` path is a v2 task.
-- Inserting siblings. Same reason.
-- Mutation targets that don't resolve to `Node` values. v1
-  attribute mutation requires node-valued selectors on the left of
-  `|=` or `del`.
-
-If one of these matters for your case, the tree evaluator already
-has the pieces. What's missing is the plumbing between the
-evaluator and the serializer.
+- `=`, set-style assignment. Use `|=`.
+- Structural mutation. `.children |= [...]`, inserting siblings,
+  replacing a whole subtree. `walk(f)` covers the needed shapes.
+- Mutation targets that don't resolve to `Node` values. `|=` and
+  `del` expect node-valued selectors on the left.

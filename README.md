@@ -11,8 +11,8 @@ From source:
 cargo install --path . --features tty
 ```
 
-The `tty` feature pulls mdcat in so results can render to the
-terminal. Skip it if you only need JSON or markdown output.
+The `tty` feature pulls mdcat in for terminal rendering. Default
+builds emit markdown or JSON.
 
 ## Usage
 
@@ -56,8 +56,8 @@ mdqy --dry-run \
 mdqy -U 'del((.. | select(type == "image")).title)' docs/
 ```
 
-`-U` writes in place (atomic rename). `--dry-run` prints a unified
-diff and exits 0 whether or not anything changed.
+`-U` writes in place via atomic rename. `--dry-run` prints a
+unified diff and exits 0.
 
 ### Multi-file
 
