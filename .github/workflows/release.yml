@@ -1,0 +1,59 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+      - name: Build
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --features tty
+          else
+            cargo build --release --target ${{ matrix.target }} --features tty
+          fi
+      - name: Package
+        id: pkg
+        run: |
+          STEM=mdqy-${GITHUB_REF_NAME}-${{ matrix.target }}
+          mkdir -p dist/$STEM
+          cp target/${{ matrix.target }}/release/mdqy dist/$STEM/
+          cp README.md LICENSE CHANGELOG.md dist/$STEM/
+          tar -C dist -czf dist/$STEM.tar.gz $STEM
+          echo "asset=dist/$STEM.tar.gz" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ steps.pkg.outputs.asset }}
+          generate_release_notes: true
