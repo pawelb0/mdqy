@@ -177,6 +177,55 @@ fn control_constructs() {
     assert_eq!(run_null("def add(a; b): a + b; 0 | add(10; 20)"), "30");
 }
 
+/// `rows`, `cells`, `headers` cover table projection.
+#[test]
+fn table_builtins_project_rows_and_cells() {
+    let src = std::fs::read_to_string("tests/fixtures/table.md").unwrap();
+    let root = parse(&src);
+
+    let headers: Vec<String> = compile("headers | .text")
+        .run_tree(&root)
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(headers, ["Name", "Role", "Since"]);
+
+    let row_kinds: Vec<String> = compile("rows | .kind")
+        .run_tree(&root)
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(row_kinds.len(), 4);
+    assert!(row_kinds.iter().all(|k| k == "row"));
+
+    let cells: Vec<String> = compile("rows | cells | .text")
+        .run_tree(&root)
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(cells.len(), 12);
+    assert_eq!(cells[3], "Ada");
+    assert_eq!(cells[11], "2024");
+}
+
+/// `error(msg)` raises a runtime error; `?` swallows it to `empty`.
+#[test]
+fn error_builtin_raises_and_catches() {
+    let raised = compile(r#"error("boom")"#)
+        .run_with_env(Value::Null, mdqy::Env::default())
+        .next()
+        .unwrap();
+    assert!(raised.is_err(), "expected error, got {raised:?}");
+    let caught = compile(r#"[error("boom")?]"#)
+        .run_with_env(Value::Null, mdqy::Env::default())
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(&caught[0], Value::Array(a) if a.is_empty()),
+        "expected empty array, got {caught:?}"
+    );
+}
+
 /// YAML + TOML frontmatter parse into the root `frontmatter` attr
 /// and are reachable via the builtin.
 #[test]

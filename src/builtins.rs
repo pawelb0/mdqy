@@ -33,6 +33,9 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "tables" => descendants(input, Table),
         "blockquotes" => descendants(input, Quote),
         "footnotes" => descendants(input, FootnoteDef),
+        "rows" => descendants(input, NodeKind::Row),
+        "cells" => cells_of(input),
+        "headers" => headers_of(input),
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
             headings_at(input, i64::from(name.as_bytes()[1] - b'0'))
         }
@@ -43,6 +46,7 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "length" => one(length_of(&input)),
 
         "empty" => Box::new(std::iter::empty()),
+        "error" => error_builtin(args, input, env),
         "first" => first_or(args, input, env, true),
         "last" => first_or(args, input, env, false),
         "select" => select(args, input, env),
@@ -248,6 +252,72 @@ fn length_of(v: &Value) -> Result<Value, RunError> {
         Value::Bool(_) | Value::Number(_) => return Err(type_err("length-capable", v)),
     };
     Ok(Value::from(n))
+}
+
+/// Stream every `Cell` child of the input node (expected: a Row).
+/// For a Table input, streams cells from every row.
+fn cells_of(input: Value) -> Stream {
+    match &input {
+        Value::Node(n) if n.kind == NodeKind::Row => {
+            descendants_shallow(&input, NodeKind::Cell)
+        }
+        Value::Node(_) => descendants(input, NodeKind::Cell),
+        _ => err(type_err("node", &input)),
+    }
+}
+
+/// First-row cells of each Table in the input. Yields one Cell node
+/// per header across every descendant table.
+fn headers_of(input: Value) -> Stream {
+    let mut tables = Vec::new();
+    collect(&input, NodeKind::Table, &mut tables);
+    let mut out = Vec::new();
+    for t in tables {
+        let Value::Node(table) = t else { continue };
+        let Some(Value::Node(first_row)) = table.children.iter().find(|c| {
+            matches!(c, Value::Node(n) if n.kind == NodeKind::Row)
+        }) else {
+            continue;
+        };
+        for cell in &first_row.children {
+            if matches!(cell, Value::Node(n) if n.kind == NodeKind::Cell) {
+                out.push(cell.clone());
+            }
+        }
+    }
+    Box::new(out.into_iter().map(Ok))
+}
+
+fn descendants_shallow(input: &Value, kind: NodeKind) -> Stream {
+    let Value::Node(n) = input else {
+        return Box::new(std::iter::empty());
+    };
+    let out: Vec<Value> = n
+        .children
+        .iter()
+        .filter(|c| matches!(c, Value::Node(child) if child.kind == kind))
+        .cloned()
+        .collect();
+    Box::new(out.into_iter().map(Ok))
+}
+
+/// `error(msg)` raises a runtime error carrying `msg`. With no
+/// argument, `input` must already be a string. `try` / `?` can
+/// catch it.
+fn error_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
+    let msg = match args.first() {
+        Some(expr) => match eval::eval_expr(expr, input, env).next() {
+            Some(Ok(Value::String(s))) => s.to_string(),
+            Some(Ok(other)) => return err(type_err("string", &other)),
+            Some(Err(e)) => return err(e),
+            None => return Box::new(std::iter::empty()),
+        },
+        None => match &input {
+            Value::String(s) => s.to_string(),
+            _ => return err(type_err("string", &input)),
+        },
+    };
+    err(RunError::Other(msg))
 }
 
 // --- collections -------------------------------------------------------------
