@@ -561,7 +561,7 @@ impl<'t, 's> Parser<'t, 's> {
             Tok::LBrace => self.parse_object_ctor(),
             Tok::Str(value) => {
                 self.advance();
-                Ok(Expr::Lit(Literal::String(Arc::from(value.as_ref()))))
+                build_string_literal(value.as_ref())
             }
             Tok::Num(n) => {
                 self.advance();
@@ -849,6 +849,104 @@ fn select_on_field_eq(lhs: Expr, field: &str, rhs: Expr) -> Expr {
             args: vec![cmp],
         }),
     )
+}
+
+/// Turn a string-literal body into an Expr. If it contains `\(expr)`
+/// markers, build `"..." + tostring(expr) + "..."` chains. Each
+/// interpolated expression is re-lexed + re-parsed from the body.
+fn build_string_literal(raw: &str) -> Result<Expr, CompileError> {
+    if !raw.contains("\\(") {
+        return Ok(Expr::Lit(Literal::String(Arc::from(raw))));
+    }
+    let mut parts: Vec<Expr> = Vec::new();
+    let bytes = raw.as_bytes();
+    let mut literal_start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'(') {
+            if i > literal_start {
+                parts.push(lit_str(&raw[literal_start..i]));
+            }
+            let expr_start = i + 2;
+            let close = find_matching_paren(bytes, expr_start).ok_or_else(|| {
+                CompileError::Lex {
+                    offset: 0,
+                    message: "unterminated `\\(` in string literal".into(),
+                }
+            })?;
+            let inner = &raw[expr_start..close];
+            let toks = crate::lex::tokenize(inner)?;
+            let inner_expr = parse(&toks)?;
+            parts.push(Expr::Pipe(
+                Box::new(inner_expr),
+                Box::new(Expr::Call {
+                    name: Arc::from("tostring"),
+                    args: Vec::new(),
+                }),
+            ));
+            i = close + 1;
+            literal_start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if literal_start < raw.len() {
+        parts.push(lit_str(&raw[literal_start..]));
+    }
+    if parts.is_empty() {
+        return Ok(lit_str(""));
+    }
+    let mut iter = parts.into_iter();
+    let mut result = iter.next().unwrap();
+    for part in iter {
+        result = Expr::Bin(Box::new(result), BinOp::Add, Box::new(part));
+    }
+    // If the first part was an interpolation, the expression evaluates
+    // to the tostring() output directly. Prepend "" so the type anchors
+    // to String (matters when tostring returns a non-string-compatible
+    // value through some mis-wiring; cheap insurance).
+    if !matches!(result, Expr::Lit(Literal::String(_))) {
+        result = Expr::Bin(Box::new(lit_str("")), BinOp::Add, Box::new(result));
+    }
+    Ok(result)
+}
+
+fn lit_str(s: &str) -> Expr {
+    Expr::Lit(Literal::String(Arc::from(s)))
+}
+
+/// Walk forward from `start` and return the index of the `)` that
+/// closes the `\(` call. Respects nested parens and string literals.
+fn find_matching_paren(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut in_str = false;
+    let mut j = start;
+    while j < bytes.len() {
+        let c = bytes[j];
+        if in_str {
+            if c == b'\\' && j + 1 < bytes.len() {
+                j += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+        } else {
+            match c {
+                b'"' => in_str = true,
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j);
+                    }
+                }
+                _ => {}
+            }
+        }
+        j += 1;
+    }
+    None
 }
 
 fn cmp_op(t: &Tok<'_>) -> Option<CmpOp> {

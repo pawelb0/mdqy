@@ -208,6 +208,31 @@ fn table_builtins_project_rows_and_cells() {
     assert_eq!(cells[11], "2024");
 }
 
+/// `"\(expr)"` interpolation.
+#[test]
+fn string_interpolation() {
+    fn run_null(expr: &str) -> String {
+        render(
+            &compile(expr)
+                .run_with_env(Value::Null, mdqy::Env::default())
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+    }
+    assert_eq!(run_null(r#""hello \(1 + 2)!""#), "hello 3!");
+    assert_eq!(run_null(r#""\(42)""#), "42");
+    assert_eq!(run_null(r#""a\(1)b\(2)c""#), "a1b2c");
+    assert_eq!(run_null(r#""plain""#), "plain");
+
+    let headings: Vec<String> = compile(r#"headings | "h\(.level): \(.text)""#)
+        .run_tree(&parse(SRC))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(headings, ["h1: Tiny", "h2: Second heading"]);
+}
+
 /// `@format` filters.
 #[test]
 fn format_filters() {
