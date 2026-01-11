@@ -75,8 +75,13 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "ltrimstr" => one(trim_side(args, &input, env, true)),
         "rtrimstr" => one(trim_side(args, &input, env, false)),
         "contains" => one(contains(args, &input, env)),
-        "tojson" => one(to_json(&input)),
+        "tojson" | "@json" => one(to_json(&input)),
         "fromjson" => one(from_json(&input)),
+        "@uri" => one(format_uri(&input)),
+        "@csv" => one(format_separated(&input, ',', true)),
+        "@tsv" => one(format_separated(&input, '\t', false)),
+        "@sh" => one(format_sh(&input)),
+        "@html" => one(format_html(&input)),
         "env" | "$ENV" => one(Ok(env_as_value())),
 
         // Collection builtins that use a key function.
@@ -661,6 +666,111 @@ fn from_json(input: &Value) -> Result<Value, RunError> {
     let j: serde_json::Value = serde_json::from_str(s)
         .map_err(|e| RunError::Other(format!("fromjson: {e}")))?;
     Ok(crate::emit::json::value_from_json(j))
+}
+
+/// `@uri`: percent-encode a string per RFC 3986 unreserved set.
+fn format_uri(input: &Value) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            use std::fmt::Write as _;
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    Ok(Value::from(out))
+}
+
+/// `@csv` / `@tsv`: join an array of scalars with a separator. Strings
+/// get quoted (CSV style: embedded quotes doubled) when `quote` is
+/// set; TSV passes strings through unchanged.
+fn format_separated(input: &Value, sep: char, quote: bool) -> Result<Value, RunError> {
+    let Value::Array(arr) = input else {
+        return Err(type_err("array", input));
+    };
+    let mut out = String::new();
+    for (i, v) in arr.iter().enumerate() {
+        if i > 0 {
+            out.push(sep);
+        }
+        match v {
+            Value::String(s) if quote => {
+                out.push('"');
+                out.push_str(&s.replace('"', "\"\""));
+                out.push('"');
+            }
+            Value::String(s) => out.push_str(s),
+            Value::Number(n) if n.fract() == 0.0 && n.is_finite() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "{}", *n as i64);
+            }
+            Value::Number(n) => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "{n}");
+            }
+            Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Value::Null => {}
+            other => return Err(type_err("scalar", other)),
+        }
+    }
+    Ok(Value::from(out))
+}
+
+/// `@sh`: single-quote a string for safe shell pasting. Embedded
+/// single quotes get closed, escaped, and reopened: `don't` ->
+/// `'don'\''t'`. Arrays join with spaces.
+fn format_sh(input: &Value) -> Result<Value, RunError> {
+    fn escape_one(s: &str, out: &mut String) {
+        out.push('\'');
+        for ch in s.chars() {
+            if ch == '\'' {
+                out.push_str("'\\''");
+            } else {
+                out.push(ch);
+            }
+        }
+        out.push('\'');
+    }
+    match input {
+        Value::String(s) => {
+            let mut out = String::new();
+            escape_one(s, &mut out);
+            Ok(Value::from(out))
+        }
+        Value::Array(arr) => {
+            let mut out = String::new();
+            for (i, v) in arr.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                let Value::String(s) = v else {
+                    return Err(type_err("string element", v));
+                };
+                escape_one(s, &mut out);
+            }
+            Ok(Value::from(out))
+        }
+        other => Err(type_err("string or array", other)),
+    }
+}
+
+/// `@html`: escape `<`, `>`, `&`, `"`, `'`.
+fn format_html(input: &Value) -> Result<Value, RunError> {
+    let s = expect_string(input)?;
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+    Ok(Value::from(out))
 }
 
 fn env_as_value() -> Value {

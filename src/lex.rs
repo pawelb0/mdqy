@@ -188,6 +188,27 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
             continue;
         }
 
+        // `@format` filter. Emit as a regular Ident with the `@`
+        // preserved so the builtin registry dispatches on the full name.
+        if c == b'@' {
+            i += 1;
+            let id_start = i;
+            while i < bytes.len() && is_ident_continue(bytes[i]) {
+                i += 1;
+            }
+            if id_start == i {
+                return Err(CompileError::Lex {
+                    offset: start,
+                    message: "bare `@` with no identifier".into(),
+                });
+            }
+            out.push(Spanned {
+                tok: Tok::Ident(&source[start..i]),
+                offset: start,
+            });
+            continue;
+        }
+
         // Dollar-prefixed variable reference.
         if c == b'$' {
             i += 1;

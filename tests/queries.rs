@@ -208,6 +208,26 @@ fn table_builtins_project_rows_and_cells() {
     assert_eq!(cells[11], "2024");
 }
 
+/// `@format` filters.
+#[test]
+fn format_filters() {
+    fn run_null(expr: &str) -> String {
+        render(
+            &compile(expr)
+                .run_with_env(Value::Null, mdqy::Env::default())
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+    }
+    assert_eq!(run_null(r#""a b & c" | @uri"#), "a%20b%20%26%20c");
+    assert_eq!(run_null(r#"["Ada","Bo"] | @csv"#), r#""Ada","Bo""#);
+    assert_eq!(run_null(r#"["a","b"] | @tsv"#), "a\tb");
+    assert_eq!(run_null(r#"["one two","three"] | @sh"#), "'one two' 'three'");
+    assert_eq!(run_null(r#""<b>hi</b>" | @html"#), "&lt;b&gt;hi&lt;/b&gt;");
+    assert_eq!(run_null(r"{x: 1} | @json"), r#"{"x":1}"#);
+}
+
 /// `error(msg)` raises a runtime error; `?` swallows it to `empty`.
 #[test]
 fn error_builtin_raises_and_catches() {
