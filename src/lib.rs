@@ -113,6 +113,16 @@ impl Query {
     pub fn is_read_only(&self) -> bool {
         !analyze::has_mutation(&self.expr)
     }
+
+    /// Name of the dispatch mode the compiler picked: `"stream"` or
+    /// `"tree"`. Useful for `--explain-mode` and for tests.
+    #[must_use]
+    pub fn mode_name(&self) -> &'static str {
+        match self.mode {
+            analyze::Mode::Stream => "stream",
+            analyze::Mode::Tree => "tree",
+        }
+    }
 }
 
 /// Parse markdown into a `Node` tree.

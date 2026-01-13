@@ -117,6 +117,15 @@ pub struct Args {
     /// Read expression from FILE instead of the positional argument.
     #[arg(short = 'f', long = "from-file", value_name = "FILE")]
     pub from_file: Option<PathBuf>,
+
+    /// Compile the expression and exit. No input is read.
+    #[arg(short = 'p', long = "compile-only")]
+    pub compile_only: bool,
+
+    /// Print the dispatch mode (`stream` or `tree`) the compiler
+    /// picked and exit.
+    #[arg(long = "explain-mode")]
+    pub explain_mode: bool,
 }
 
 /// The built `clap::Command` for the `mdqy` binary. Exposed so
@@ -155,6 +164,14 @@ pub fn run() -> anyhow::Result<()> {
     let trimmed = expression.trim();
     let query = crate::Query::compile(trimmed)
         .map_err(|e| anyhow::anyhow!("{}", e.render(trimmed)))?;
+
+    if args.explain_mode {
+        println!("mode: {}", query.mode_name());
+        return Ok(());
+    }
+    if args.compile_only {
+        return Ok(());
+    }
 
     let env = build_env(&args)?;
 
