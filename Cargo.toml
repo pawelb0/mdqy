@@ -36,6 +36,8 @@ tempfile = "3"
 # Frontmatter parsing.
 serde_yaml = "0.9"
 toml = "0.8"
+# Per-file parallelism under --workers.
+rayon = "1.10"
 
 mdcat = { package = "mdcat-ng", version = "0.2", optional = true, default-features = false, features = ["image-processing"] }
 syntect = { version = "5.3.0", optional = true, default-features = false, features = ["parsing", "regex-fancy", "default-syntaxes"] }

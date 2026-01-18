@@ -122,6 +122,11 @@ pub struct Args {
     #[arg(short = 'p', long = "compile-only")]
     pub compile_only: bool,
 
+    /// Number of worker threads for per-file query dispatch. `0`
+    /// picks a thread per CPU. `1` (default) runs sequentially.
+    #[arg(long, default_value_t = 1)]
+    pub workers: usize,
+
     /// Print the dispatch mode (`stream` or `tree`) the compiler
     /// picked and exit.
     #[arg(long = "explain-mode")]
@@ -242,6 +247,9 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     match aggregation {
+        Aggregation::PerFile if args.workers != 1 && !matches!(format, OutputFormat::Tty) => {
+            run_per_file_parallel(&query, &inputs, &env, format, &args, &mut stdout)?;
+        }
         Aggregation::PerFile => {
             for path in &inputs {
                 let source = fs::read_to_string(path)?;
@@ -338,6 +346,53 @@ fn tag_with_path(value: &Value, path: Option<&Path>) -> Value {
     obj.insert("path".into(), Value::from(path_str));
     obj.insert("value".into(), value.clone());
     Value::Object(std::sync::Arc::new(obj))
+}
+
+/// Parallel per-file query dispatch. Each worker parses its file,
+/// runs the query, and serialises results into a per-file buffer.
+/// Buffers stream back to stdout in the original input order so the
+/// output is identical to the serial path.
+fn run_per_file_parallel(
+    query: &crate::Query,
+    inputs: &[PathBuf],
+    env: &crate::Env,
+    format: OutputFormat,
+    args: &Args,
+    stdout: &mut io::BufWriter<io::StdoutLock<'_>>,
+) -> anyhow::Result<()> {
+    use rayon::prelude::*;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(args.workers)
+        .build()
+        .map_err(|e| anyhow::anyhow!("thread pool: {e}"))?;
+    let bufs: Vec<anyhow::Result<Vec<u8>>> = pool.install(|| {
+        inputs
+            .par_iter()
+            .map(|path| {
+                let source = fs::read_to_string(path)?;
+                let root = crate::events::build_tree_from_source(&source);
+                let mut buf: Vec<u8> = Vec::new();
+                for r in query.run_with_env(Value::from(root), env.clone()) {
+                    let value = r.map_err(|e| {
+                        anyhow::anyhow!("runtime error in {}: {e}", path.display())
+                    })?;
+                    let tagged;
+                    let out_value = if args.with_path && matches!(format, OutputFormat::Json) {
+                        tagged = tag_with_path(&value, Some(path));
+                        &tagged
+                    } else {
+                        &value
+                    };
+                    emit_value(&mut buf, out_value, format, args, &source)?;
+                }
+                Ok(buf)
+            })
+            .collect()
+    });
+    for buf in bufs {
+        stdout.write_all(&buf?)?;
+    }
+    Ok(())
 }
 
 fn read_all_roots(inputs: &[PathBuf]) -> anyhow::Result<Vec<Value>> {

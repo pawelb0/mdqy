@@ -105,6 +105,34 @@ fn compile_error_exits_with_caret() {
 }
 
 #[test]
+fn workers_preserves_sequential_output() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, body) in [
+        ("a.md", "# A\n## A-sub\n"),
+        ("b.md", "# B\n## B-sub\n"),
+        ("c.md", "# C\n## C-sub\n"),
+        ("d.md", "# D\n## D-sub\n"),
+    ] {
+        fs::write(dir.path().join(name), body).unwrap();
+    }
+    let serial = mdqy()
+        .args(["headings | .text", dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let parallel = mdqy()
+        .args(["--workers", "4", "headings | .text", dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(serial, parallel);
+}
+
+#[test]
 fn arg_and_argjson_bind_variables() {
     mdqy()
         .args(["--arg", "name", "World", "-n", r#""hi " + $name"#])
