@@ -127,6 +127,11 @@ pub struct Args {
     #[arg(long, default_value_t = 1)]
     pub workers: usize,
 
+    /// Re-run the query whenever the input file changes. Requires
+    /// the `watch` cargo feature and a single file path.
+    #[arg(long)]
+    pub watch: bool,
+
     /// Print the dispatch mode (`stream` or `tree`) the compiler
     /// picked and exit.
     #[arg(long = "explain-mode")]
@@ -179,6 +184,10 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     let env = build_env(&args)?;
+
+    if args.watch {
+        return run_watch(&query, &args, env, format);
+    }
 
     let walk_opts = WalkOptions {
         follow_symlinks: args.follow,
@@ -393,6 +402,77 @@ fn run_per_file_parallel(
         stdout.write_all(&buf?)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "watch")]
+fn run_watch(
+    query: &crate::Query,
+    args: &Args,
+    env: crate::Env,
+    format: OutputFormat,
+) -> anyhow::Result<()> {
+    use notify::{Event, EventKind, RecursiveMode, Watcher};
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+
+    if args.paths.len() != 1 || !args.paths[0].is_file() {
+        anyhow::bail!("--watch expects exactly one file path");
+    }
+    let path = args.paths[0].clone();
+
+    let render = || -> anyhow::Result<()> {
+        let source = fs::read_to_string(&path)?;
+        let root = crate::events::build_tree_from_source(&source);
+        let mut stdout = io::BufWriter::new(io::stdout().lock());
+        write!(stdout, "\x1b[2J\x1b[H")?;
+        emit_stream(
+            query.run_with_env(Value::from(root), env.clone()),
+            &source,
+            Some(&path),
+            format,
+            args,
+            &mut stdout,
+        )
+    };
+
+    render()?;
+
+    let (tx, rx) = channel::<notify::Result<Event>>();
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    })?;
+    watcher.watch(&path, RecursiveMode::NonRecursive)?;
+
+    let debounce = Duration::from_millis(150);
+    loop {
+        match rx.recv() {
+            Ok(Ok(ev)) if matches!(ev.kind, EventKind::Modify(_) | EventKind::Create(_)) => {
+                loop {
+                    match rx.recv_timeout(debounce) {
+                        Ok(_) => {}
+                        Err(RecvTimeoutError::Timeout) => break,
+                        Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                    }
+                }
+                if let Err(e) = render() {
+                    eprintln!("mdqy: {e}");
+                }
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => eprintln!("mdqy: watch error: {e}"),
+            Err(_) => return Ok(()),
+        }
+    }
+}
+
+#[cfg(not(feature = "watch"))]
+fn run_watch(
+    _query: &crate::Query,
+    _args: &Args,
+    _env: crate::Env,
+    _format: OutputFormat,
+) -> anyhow::Result<()> {
+    anyhow::bail!("--watch requires the `watch` cargo feature")
 }
 
 fn read_all_roots(inputs: &[PathBuf]) -> anyhow::Result<Vec<Value>> {
