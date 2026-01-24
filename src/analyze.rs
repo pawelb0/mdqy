@@ -58,41 +58,23 @@ pub fn choose_mode(expr: &Expr) -> Mode {
 /// Build a [`StreamPlan`] if `expr` fits the stream-safe grammar.
 #[must_use]
 pub fn plan(expr: &Expr) -> Option<StreamPlan> {
-    // Flatten the pipeline left to right.
     let stages = unfold_pipeline(expr);
-    if stages.len() < 2 {
-        return None;
-    }
-
-    // Stage 0: kind source (`headings`, `codeblocks`, ..., `hN`).
-    let (kind, mut level_eq) = stage0(stages[0])?;
-
-    // Optional middle stage: `select(.level == N)`.
-    let emit_stage_idx = if stages.len() == 3 {
-        let level_constraint = extract_level_select(stages[1])?;
-        // Only Headings carry a level; conflicting constraints are rejected.
-        if kind != NodeKind::Heading {
-            return None;
+    let (kind_stage, attr_stage) = match stages.as_slice() {
+        [k, a] => (k, a),
+        [k, mid, a] => {
+            let constraint = extract_level_select(mid)?;
+            let (kind, level) = kind_source(k)?;
+            if kind != NodeKind::Heading || level.is_some_and(|l| l != constraint) {
+                return None;
+            }
+            let emit = emit_for(kind, &as_field(a)?)?;
+            return Some(StreamPlan { kind, level_eq: Some(constraint), emit });
         }
-        match (level_eq, level_constraint) {
-            (Some(a), b) if a != b => return None,
-            _ => level_eq = Some(level_constraint),
-        }
-        2
-    } else if stages.len() == 2 {
-        1
-    } else {
-        return None;
+        _ => return None,
     };
-
-    // Final stage: `.ATTR`, where ATTR is a recognised field/attr.
-    let attr = as_field(stages[emit_stage_idx])?;
-    let emit = emit_for(kind, &attr)?;
-    Some(StreamPlan {
-        kind,
-        level_eq,
-        emit,
-    })
+    let (kind, level_eq) = kind_source(kind_stage)?;
+    let emit = emit_for(kind, &as_field(attr_stage)?)?;
+    Some(StreamPlan { kind, level_eq, emit })
 }
 
 /// `true` if `expr` (or anything inside it) would mutate the tree.
@@ -151,10 +133,9 @@ fn unfold<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     }
 }
 
-/// Match the first pipeline stage: a kind-producing call like
-/// `headings`, `codeblocks`, or `hN`. Returns `(kind, level)` where
-/// `level` is set only for `hN`.
-fn stage0(expr: &Expr) -> Option<(NodeKind, Option<i64>)> {
+/// Match a kind-producing call like `headings`, `codeblocks`, or
+/// `hN`. Returns `(kind, level)` where `level` is set only for `hN`.
+fn kind_source(expr: &Expr) -> Option<(NodeKind, Option<i64>)> {
     let Expr::Call { name, args } = expr else { return None };
     if !args.is_empty() {
         return None;
@@ -176,7 +157,7 @@ fn stage0(expr: &Expr) -> Option<(NodeKind, Option<i64>)> {
     Some((kind, level))
 }
 
-/// Match an optional middle stage of the form `select(.level == N)`.
+/// Match `select(.level == N)`.
 fn extract_level_select(expr: &Expr) -> Option<i64> {
     let Expr::Call { name, args } = expr else { return None };
     if name.as_ref() != "select" || args.len() != 1 {
