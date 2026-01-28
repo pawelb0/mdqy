@@ -71,57 +71,12 @@ impl Env {
 
 type Stream = Box<dyn Iterator<Item = Result<Value, RunError>>>;
 
-/// Run `expr` against a tree borrowed from the caller. The input is
-/// cloned into the stream so the returned iterator can outlive no
-/// reference.
-pub fn run_tree<'a>(
-    expr: &'a Expr,
-    root: &'a Node,
-) -> impl Iterator<Item = Result<Value, RunError>> + 'a {
-    run_value_owned(expr.clone(), Value::from(root.clone()))
-}
-
-/// Run with an owned tree. Used when the tree was just built from
-/// events and has no caller lifetime to borrow.
-pub fn run_tree_owned(
-    expr: Expr,
-    root: Node,
-) -> impl Iterator<Item = Result<Value, RunError>> + 'static {
-    run_value_owned(expr, Value::from(root))
-}
-
-/// Run against an arbitrary `Value`. `--slurp` uses this with an
-/// array bound to `.`.
-pub fn run_value_owned(
-    expr: Expr,
-    input: Value,
-) -> impl Iterator<Item = Result<Value, RunError>> + 'static {
-    run_value_owned_env(expr, input, Env::default())
-}
-
-/// Run against a `Value` with pre-populated variable bindings.
-pub fn run_value_owned_env(
-    expr: Expr,
-    input: Value,
-    env: Env,
-) -> impl Iterator<Item = Result<Value, RunError>> + 'static {
-    eval(&expr, input, &env)
-}
-
-/// Public alias for [`eval`]. `builtins::invoke` calls this to
-/// recurse on expression arguments without depending on the private
-/// name.
-pub(crate) fn eval_expr(expr: &Expr, input: Value, env: &Env) -> Stream {
-    eval(expr, input, env)
-}
-
-/// Public `a + b`. The `add` builtin folds an array with this.
+/// `a + b`. The `add` builtin folds with this.
 pub(crate) fn apply_add(a: &Value, b: &Value) -> Result<Value, RunError> {
     apply_bin(a, BinOp::Add, b)
 }
 
-/// Total order matching jq's `sort`/`unique`. Exposed so builtins
-/// can sort without re-implementing the type ladder.
+/// Total order matching jq's `sort`/`unique`.
 pub(crate) fn value_cmp_for_sort(a: &Value, b: &Value) -> Ordering {
     value_cmp(a, b)
 }
@@ -337,28 +292,29 @@ fn eval_int(expr: Option<&Expr>, input: &Value, env: &Env) -> Result<Option<i64>
 /// Comparison: evaluate both sides, compare, emit a bool. No
 /// short-circuit.
 fn cmp_stream(l: &Expr, op: CmpOp, r: &Expr, input: Value, env: &Env) -> Stream {
+    cross(l, r, input, env, move |lv, rv| Ok(Value::Bool(match op {
+        CmpOp::Eq => value_cmp(&lv, &rv).is_eq(),
+        CmpOp::Ne => !value_cmp(&lv, &rv).is_eq(),
+        CmpOp::Lt => value_cmp(&lv, &rv).is_lt(),
+        CmpOp::Le => value_cmp(&lv, &rv).is_le(),
+        CmpOp::Gt => value_cmp(&lv, &rv).is_gt(),
+        CmpOp::Ge => value_cmp(&lv, &rv).is_ge(),
+    })))
+}
+
+/// Cross-product of two streams, combined via `f`.
+fn cross<F>(l: &Expr, r: &Expr, input: Value, env: &Env, f: F) -> Stream
+where F: Fn(Value, Value) -> Result<Value, RunError> + Clone + 'static {
     let env = env.clone();
     let r = r.clone();
     let outer = input.clone();
     Box::new(eval(l, input, &env).flat_map(move |x| match x {
         Err(e) => once(Err(e)),
         Ok(lv) => {
-            let (env, outer) = (env.clone(), outer.clone());
-            Box::new(eval(&r, outer, &env).map(move |y| y.map(|rv| compare(&lv, op, &rv)))) as Stream
+            let (env, outer, f) = (env.clone(), outer.clone(), f.clone());
+            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| f(lv.clone(), rv)))) as Stream
         }
     }))
-}
-
-fn compare(a: &Value, op: CmpOp, b: &Value) -> Value {
-    let ord = value_cmp(a, b);
-    Value::Bool(match op {
-        CmpOp::Eq => ord.is_eq(),
-        CmpOp::Ne => !ord.is_eq(),
-        CmpOp::Lt => ord.is_lt(),
-        CmpOp::Le => ord.is_le(),
-        CmpOp::Gt => ord.is_gt(),
-        CmpOp::Ge => ord.is_ge(),
-    })
 }
 
 fn value_cmp(a: &Value, b: &Value) -> Ordering {
@@ -398,12 +354,12 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
     let outer = input.clone();
     Box::new(eval(l, input, &env).flat_map(move |x| match x {
         Err(e) => once(Err(e)),
-        Ok(lv) => {
-            if let Some(v) = short_circuit(&lv, op) {
-                return once(Ok(v));
+        Ok(lv) => match short_circuit(&lv, op) {
+            Some(v) => once(Ok(v)),
+            None => {
+                let (env, outer) = (env.clone(), outer.clone());
+                Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| apply_bin(&lv, op, &rv)))) as Stream
             }
-            let (env, outer) = (env.clone(), outer.clone());
-            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| apply_bin(&lv, op, &rv)))) as Stream
         }
     }))
 }
@@ -495,10 +451,9 @@ fn object(entries: &[(ObjKey, Expr)], input: Value, env: &Env) -> Stream {
                 None => continue,
             },
         };
-        let value = match eval(v_expr, input.clone(), env).next() {
-            Some(Ok(v)) => v,
-            Some(Err(e)) => return once(Err(e)),
-            None => Value::Null,
+        let value = match eval(v_expr, input.clone(), env).next().transpose() {
+            Ok(v) => v.unwrap_or(Value::Null),
+            Err(e) => return once(Err(e)),
         };
         map.insert(key, value);
     }
@@ -563,31 +518,26 @@ fn reduce_fold(
     input: Value,
     env: &Env,
 ) -> Stream {
-    // Materialise the source stream up front; reduce and foreach are
-    // strict in jq semantics anyway.
+    let first_or_null = |expr, val, env: &Env| -> Result<Value, RunError> {
+        eval(expr, val, env).next().transpose().map(|o| o.unwrap_or(Value::Null))
+    };
     let items: Vec<Value> = match eval(source, input.clone(), env).collect::<Result<_, _>>() {
         Ok(v) => v,
         Err(e) => return once(Err(e)),
     };
-    let mut acc = match eval(init, input.clone(), env).next() {
-        Some(Ok(v)) => v,
-        Some(Err(e)) => return once(Err(e)),
-        None => Value::Null,
+    let mut acc = match first_or_null(init, input, env) {
+        Ok(v) => v,
+        Err(e) => return once(Err(e)),
     };
     let mut out = Vec::new();
     for item in items {
         let bound = env.clone().with(var.as_ref(), item);
-        acc = match eval(update, acc, &bound).next() {
-            Some(Ok(v)) => v,
-            Some(Err(e)) => return once(Err(e)),
-            None => Value::Null,
+        acc = match first_or_null(update, acc, &bound) {
+            Ok(v) => v,
+            Err(e) => return once(Err(e)),
         };
         if let Some(e) = extract {
-            match eval(e, acc.clone(), &bound).next() {
-                Some(Ok(v)) => out.push(Ok(v)),
-                Some(Err(err)) => return once(Err(err)),
-                None => out.push(Ok(Value::Null)),
-            }
+            out.push(first_or_null(e, acc.clone(), &bound));
         }
     }
     if extract.is_none() {

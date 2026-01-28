@@ -67,38 +67,25 @@ impl Query {
     {
         match self.mode {
             analyze::Mode::Stream => stream::run(self.expr.clone(), events),
-            analyze::Mode::Tree => Box::new(eval::run_tree_owned(
-                self.expr.clone(),
-                events::build_tree(events),
-            )),
+            analyze::Mode::Tree => self.run_value(Value::from(events::build_tree(events))),
         }
     }
 
     /// Run with pre-populated variable bindings. Used by the CLI to
     /// carry `--arg` / `--argjson` into evaluation.
-    pub fn run_with_env(
-        &self,
-        input: Value,
-        env: Env,
-    ) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
-        Box::new(eval::run_value_owned_env(self.expr.clone(), input, env))
+    pub fn run_with_env(&self, input: Value, env: Env) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
+        eval::eval(&self.expr, input, &env)
     }
 
     /// Run over an already-built tree. Skips stream dispatch.
-    pub fn run_tree<'a>(
-        &'a self,
-        root: &'a Node,
-    ) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'a> {
-        Box::new(eval::run_tree(&self.expr, root))
+    pub fn run_tree<'a>(&'a self, root: &'a Node) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'a> {
+        self.run_value(Value::from(root.clone()))
     }
 
     /// Run over any `Value`. Used by `--slurp`, which binds `.` to an
     /// array of root nodes.
-    pub fn run_value(
-        &self,
-        input: Value,
-    ) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
-        Box::new(eval::run_value_owned(self.expr.clone(), input))
+    pub fn run_value(&self, input: Value) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
+        self.run_with_env(input, Env::default())
     }
 
     /// Transform markdown bytes. Parses, applies `|=` / `del(...)`,
