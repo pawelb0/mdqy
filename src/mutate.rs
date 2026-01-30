@@ -40,20 +40,16 @@ fn apply_expr(expr: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {
             let r1 = apply_expr(a, root)?;
             apply_expr(b, r1)
         }
-        Expr::Assign(lhs, AssignOp::Update, rhs) => apply_update(lhs, rhs, root),
+        Expr::Assign(lhs, AssignOp::Update, rhs) => apply_attr_op(lhs, root, Op::Update(rhs)),
         Expr::Assign(_, AssignOp::Set, _) => Err(RunError::NotImplemented {
             feature: "`=` assignment (use `|=`)",
         }),
-        // `del(...)` and `walk(...)` parse as calls but carry mutation
-        // semantics, so the write path intercepts them here.
         Expr::Call { name, args } if name.as_ref() == "del" && args.len() == 1 => {
-            apply_delete(&args[0], root)
+            apply_attr_op(&args[0], root, Op::Delete)
         }
         Expr::Call { name, args } if name.as_ref() == "walk" && args.len() == 1 => {
             walk_tree(&args[0], root)
         }
-        // Read-only subexpressions to the left of a mutation exist for
-        // their results, not for their side effects. Drop them.
         _ => Ok(root),
     }
 }
@@ -117,15 +113,9 @@ fn apply_walk_f(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
                 None => Ok(node),
             }
         }
-        Expr::Assign(lhs, AssignOp::Update, rhs) => {
-            let (_, attr_name) = split_attr_lhs(lhs)?;
-            let targets: HashSet<usize> = [Arc::as_ptr(&node) as usize].into_iter().collect();
-            walk_and_update(node, &targets, &attr_name, &Op::Update(rhs))
-        }
+        Expr::Assign(lhs, AssignOp::Update, rhs) => walk_self_attr(node, lhs, Op::Update(rhs)),
         Expr::Call { name, args } if name.as_ref() == "del" && args.len() == 1 => {
-            let (_, attr_name) = split_attr_lhs(&args[0])?;
-            let targets: HashSet<usize> = [Arc::as_ptr(&node) as usize].into_iter().collect();
-            walk_and_update(node, &targets, &attr_name, &Op::Delete)
+            walk_self_attr(node, &args[0], Op::Delete)
         }
         _ => {
             // Read-only path: eval against the node and demand a
@@ -144,17 +134,15 @@ fn apply_walk_f(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
     }
 }
 
-fn apply_update(lhs: &Expr, rhs: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {
-    apply_attr_op(lhs, root, Op::Update(rhs))
-}
-
-fn apply_delete(path: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {
-    apply_attr_op(path, root, Op::Delete)
-}
-
 enum Op<'a> {
     Update(&'a Expr),
     Delete,
+}
+
+fn walk_self_attr(node: Arc<Node>, lhs: &Expr, op: Op<'_>) -> Result<Arc<Node>, RunError> {
+    let (_, attr_name) = split_attr_lhs(lhs)?;
+    let targets: HashSet<usize> = [Arc::as_ptr(&node) as usize].into_iter().collect();
+    walk_and_update(node, &targets, &attr_name, &op)
 }
 
 fn apply_attr_op(path: &Expr, root: Arc<Node>, op: Op<'_>) -> Result<Arc<Node>, RunError> {
