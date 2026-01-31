@@ -26,15 +26,7 @@ pub fn emit<W: io::Write>(writer: &mut W, source: &str, value: &Value) -> Result
     match value {
         Value::Node(n) => serialize(writer, source.as_bytes(), n),
         Value::String(s) => write_line(writer, s.as_bytes()),
-        other => {
-            let json = crate::emit::json::value_to_json(
-                other,
-                crate::emit::json::JsonOptions::COMPACT,
-            );
-            serde_json::to_writer(&mut *writer, &json).map_err(|e| RunError::Io(e.to_string()))?;
-            writer.write_all(b"\n")?;
-            Ok(())
-        }
+        other => crate::emit::json::emit(writer, other, crate::emit::json::JsonOptions::COMPACT),
     }
 }
 
