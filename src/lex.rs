@@ -89,7 +89,6 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
         let start = i;
         let c = bytes[i];
 
-        // Skip whitespace.
         if c.is_ascii_whitespace() {
             i += 1;
             continue;
@@ -112,34 +111,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
             continue;
         }
 
-        // Single-char punctuation.
-        let single = match c {
-            b'.' => Some(Tok::Dot),
-            b'(' => Some(Tok::LParen),
-            b')' => Some(Tok::RParen),
-            b'[' => Some(Tok::LBracket),
-            b']' => Some(Tok::RBracket),
-            b'{' => Some(Tok::LBrace),
-            b'}' => Some(Tok::RBrace),
-            b',' => Some(Tok::Comma),
-            b';' => Some(Tok::Semicolon),
-            b'|' => Some(Tok::Pipe),
-            b'=' => Some(Tok::Eq),
-            b'/' => Some(Tok::Slash),
-            b'?' => Some(Tok::Question),
-            b'+' => Some(Tok::Plus),
-            b'-' => Some(Tok::Minus),
-            b'*' => Some(Tok::Star),
-            b'%' => Some(Tok::Percent),
-            b'<' => Some(Tok::Lt),
-            b'>' => Some(Tok::Gt),
-            _ => None,
-        };
-        if let Some(t) = single {
-            out.push(Spanned {
-                tok: t,
-                offset: start,
-            });
+        if let Some(tok) = single_char_tok(c) {
+            out.push(Spanned { tok, offset: start });
             i += 1;
             continue;
         }
@@ -157,55 +130,36 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
                     message: format!("too many `#` (max 6), got at least {}", count + 1),
                 });
             }
-            out.push(Spanned {
-                tok: Tok::Hash(count),
-                offset: start,
-            });
+            out.push(Spanned { tok: Tok::Hash(count), offset: start });
             continue;
         }
 
         // Colon-prefixed pseudo: `:first`, or bare `:`.
         if c == b':' {
             let next = bytes.get(i + 1).copied();
-            if next.is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') {
+            let tok = if next.is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') {
                 i += 1;
                 let id_start = i;
                 while i < bytes.len() && is_ident_continue(bytes[i]) {
                     i += 1;
                 }
-                let name = &source[id_start..i];
-                out.push(Spanned {
-                    tok: Tok::ColonIdent(name),
-                    offset: start,
-                });
+                Tok::ColonIdent(&source[id_start..i])
             } else {
-                out.push(Spanned {
-                    tok: Tok::Colon,
-                    offset: start,
-                });
                 i += 1;
-            }
+                Tok::Colon
+            };
+            out.push(Spanned { tok, offset: start });
             continue;
         }
 
         // `@format` filter. Emit as a regular Ident with the `@`
         // preserved so the builtin registry dispatches on the full name.
         if c == b'@' {
-            i += 1;
-            let id_start = i;
-            while i < bytes.len() && is_ident_continue(bytes[i]) {
-                i += 1;
+            i = scan_ident(bytes, i + 1);
+            if i == start + 1 {
+                return Err(CompileError::Lex { offset: start, message: "bare `@` with no identifier".into() });
             }
-            if id_start == i {
-                return Err(CompileError::Lex {
-                    offset: start,
-                    message: "bare `@` with no identifier".into(),
-                });
-            }
-            out.push(Spanned {
-                tok: Tok::Ident(&source[start..i]),
-                offset: start,
-            });
+            out.push(Spanned { tok: Tok::Ident(&source[start..i]), offset: start });
             continue;
         }
 
@@ -213,52 +167,31 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
         if c == b'$' {
             i += 1;
             let id_start = i;
-            while i < bytes.len() && is_ident_continue(bytes[i]) {
-                i += 1;
-            }
+            i = scan_ident(bytes, i);
             if id_start == i {
-                return Err(CompileError::Lex {
-                    offset: start,
-                    message: "bare `$` with no identifier".into(),
-                });
+                return Err(CompileError::Lex { offset: start, message: "bare `$` with no identifier".into() });
             }
-            let name = &source[id_start..i];
-            out.push(Spanned {
-                tok: Tok::DollarIdent(name),
-                offset: start,
-            });
+            out.push(Spanned { tok: Tok::DollarIdent(&source[id_start..i]), offset: start });
             continue;
         }
 
-        // String literal.
         if c == b'"' {
             let (value, end) = lex_string(source, i)?;
-            out.push(Spanned {
-                tok: Tok::Str(value),
-                offset: start,
-            });
+            out.push(Spanned { tok: Tok::Str(value), offset: start });
             i = end;
             continue;
         }
 
-        // Number literal (simple floating-point).
         if c.is_ascii_digit() {
             let (num, end) = lex_number(source, i)?;
-            out.push(Spanned {
-                tok: Tok::Num(num),
-                offset: start,
-            });
+            out.push(Spanned { tok: Tok::Num(num), offset: start });
             i = end;
             continue;
         }
 
-        // Identifier / keyword.
         if is_ident_start(c) {
             let id_start = i;
-            i += 1;
-            while i < bytes.len() && is_ident_continue(bytes[i]) {
-                i += 1;
-            }
+            i = scan_ident(bytes, i + 1);
             let name = &source[id_start..i];
             let tok = keyword_for(name).unwrap_or(Tok::Ident(name));
             out.push(Spanned { tok, offset: start });
@@ -271,11 +204,40 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
         });
     }
 
-    out.push(Spanned {
-        tok: Tok::Eof,
-        offset: source.len(),
-    });
+    out.push(Spanned { tok: Tok::Eof, offset: source.len() });
     Ok(out)
+}
+
+fn scan_ident(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && is_ident_continue(bytes[i]) {
+        i += 1;
+    }
+    i
+}
+
+fn single_char_tok(c: u8) -> Option<Tok<'static>> {
+    Some(match c {
+        b'.' => Tok::Dot,
+        b'(' => Tok::LParen,
+        b')' => Tok::RParen,
+        b'[' => Tok::LBracket,
+        b']' => Tok::RBracket,
+        b'{' => Tok::LBrace,
+        b'}' => Tok::RBrace,
+        b',' => Tok::Comma,
+        b';' => Tok::Semicolon,
+        b'|' => Tok::Pipe,
+        b'=' => Tok::Eq,
+        b'/' => Tok::Slash,
+        b'?' => Tok::Question,
+        b'+' => Tok::Plus,
+        b'-' => Tok::Minus,
+        b'*' => Tok::Star,
+        b'%' => Tok::Percent,
+        b'<' => Tok::Lt,
+        b'>' => Tok::Gt,
+        _ => return None,
+    })
 }
 
 fn is_ident_start(c: u8) -> bool {
