@@ -29,7 +29,9 @@ use crate::lex::{Spanned, Tok};
 pub fn parse(tokens: &[Spanned<'_>]) -> Result<Expr, CompileError> {
     let mut p = Parser::new(tokens);
     let expr = p.parse_top()?;
-    p.expect_eof()?;
+    if !matches!(p.peek(), Tok::Eof) {
+        return p.err("end of input");
+    }
     // If the query used `>` combinators, the desugaring references
     // `$__root` so `section(...)` can run against the original root
     // instead of whichever node the chain flowed into. Bind it here.
@@ -80,18 +82,6 @@ impl<'t, 's> Parser<'t, 's> {
         t
     }
 
-    fn expect_eof(&self) -> Result<(), CompileError> {
-        if matches!(self.peek(), Tok::Eof) {
-            Ok(())
-        } else {
-            Err(CompileError::Parse {
-                offset: self.peek_offset(),
-                expected: "end of input".into(),
-                found: describe(self.peek()),
-            })
-        }
-    }
-
     fn err<T>(&self, expected: &str) -> Result<T, CompileError> {
         Err(CompileError::Parse {
             offset: self.peek_offset(),
@@ -103,28 +93,18 @@ impl<'t, 's> Parser<'t, 's> {
     /// Peel off leading `def ...; def ...;` forms, then parse the
     /// main pipeline against the resulting scope.
     fn parse_top(&mut self) -> Result<Expr, CompileError> {
-        if matches!(self.peek(), Tok::KwDef) {
-            self.advance();
-            let name = match self.peek().clone() {
-                Tok::Ident(n) => {
-                    self.advance();
-                    Arc::<str>::from(n)
-                }
-                _ => return self.err("name after `def`"),
-            };
-            let params = self.parse_def_params()?;
-            self.expect(Tok::Colon, "`:`")?;
-            let body = self.parse_pipeline()?;
-            self.expect(Tok::Semicolon, "`;`")?;
-            let rest = self.parse_top()?;
-            return Ok(Expr::Def {
-                name,
-                params,
-                body: Box::new(body),
-                rest: Box::new(rest),
-            });
+        if !matches!(self.peek(), Tok::KwDef) {
+            return self.parse_pipeline();
         }
-        self.parse_pipeline()
+        self.advance();
+        let Tok::Ident(name) = self.peek().clone() else { return self.err("name after `def`"); };
+        self.advance();
+        let params = self.parse_def_params()?;
+        self.expect(Tok::Colon, "`:`")?;
+        let body = self.parse_pipeline()?;
+        self.expect(Tok::Semicolon, "`;`")?;
+        let rest = self.parse_top()?;
+        Ok(Expr::Def { name: Arc::from(name), params, body: Box::new(body), rest: Box::new(rest) })
     }
 
     /// Parse the optional `(p1; p2; ...)` after a def name.
@@ -134,21 +114,12 @@ impl<'t, 's> Parser<'t, 's> {
         }
         self.advance();
         let mut params = Vec::new();
-        if !matches!(self.peek(), Tok::RParen) {
-            loop {
-                match self.peek().clone() {
-                    Tok::Ident(n) => {
-                        self.advance();
-                        params.push(Arc::<str>::from(n));
-                    }
-                    _ => return self.err("parameter name"),
-                }
-                if matches!(self.peek(), Tok::Semicolon) {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
+        while !matches!(self.peek(), Tok::RParen) {
+            let Tok::Ident(n) = self.peek().clone() else { return self.err("parameter name"); };
+            self.advance();
+            params.push(Arc::<str>::from(n));
+            if !matches!(self.peek(), Tok::Semicolon) { break; }
+            self.advance();
         }
         self.expect(Tok::RParen, "`)`")?;
         Ok(params)
@@ -157,37 +128,24 @@ impl<'t, 's> Parser<'t, 's> {
     // ---- precedence layers -------------------------------------------------
 
     fn parse_pipeline(&mut self) -> Result<Expr, CompileError> {
-        let mut lhs = self.parse_comma()?;
-        loop {
-            match self.peek() {
-                Tok::Pipe => {
-                    self.advance();
-                    let rhs = self.parse_comma()?;
-                    lhs = Expr::Pipe(Box::new(lhs), Box::new(rhs));
-                }
-                Tok::KwAs => {
-                    lhs = self.parse_as_tail(lhs, /* allow_comma */ true)?;
-                }
-                _ => break,
-            }
-        }
-        Ok(lhs)
+        self.parse_pipeline_with(Self::parse_comma, true)
     }
 
     /// Pipeline without comma-union. Used inside `{...}` entries and
     /// `fn(a; b)` args, where `,` is a separator instead of an operator.
     fn parse_pipeline_no_comma(&mut self) -> Result<Expr, CompileError> {
-        let mut lhs = self.parse_alt()?;
+        self.parse_pipeline_with(Self::parse_alt, false)
+    }
+
+    fn parse_pipeline_with(&mut self, next: fn(&mut Self) -> Result<Expr, CompileError>, allow_comma: bool) -> Result<Expr, CompileError> {
+        let mut lhs = next(self)?;
         loop {
             match self.peek() {
                 Tok::Pipe => {
                     self.advance();
-                    let rhs = self.parse_alt()?;
-                    lhs = Expr::Pipe(Box::new(lhs), Box::new(rhs));
+                    lhs = Expr::Pipe(Box::new(lhs), Box::new(next(self)?));
                 }
-                Tok::KwAs => {
-                    lhs = self.parse_as_tail(lhs, /* allow_comma */ false)?;
-                }
+                Tok::KwAs => lhs = self.parse_as_tail(lhs, allow_comma)?,
                 _ => break,
             }
         }
@@ -196,24 +154,12 @@ impl<'t, 's> Parser<'t, 's> {
 
     /// Parse `bind as $name | body`. `bind` already consumed.
     fn parse_as_tail(&mut self, bind: Expr, allow_comma: bool) -> Result<Expr, CompileError> {
-        self.advance(); // Tok::KwAs
-        let name = match self.peek().clone() {
-            Tok::DollarIdent(n) => {
-                self.advance();
-                Arc::<str>::from(n)
-            }
-            _ => return self.err("`$name` after `as`"),
-        };
-        if !matches!(self.peek(), Tok::Pipe) {
-            return self.err("`|` after `as $name`");
-        }
         self.advance();
+        let Tok::DollarIdent(name) = self.peek().clone() else { return self.err("`$name` after `as`"); };
+        self.advance();
+        self.expect(Tok::Pipe, "`|` after `as $name`")?;
         let body = if allow_comma { self.parse_comma()? } else { self.parse_alt()? };
-        Ok(Expr::As {
-            bind: Box::new(bind),
-            name,
-            body: Box::new(body),
-        })
+        Ok(Expr::As { bind: Box::new(bind), name: Arc::from(name), body: Box::new(body) })
     }
 
     fn parse_comma(&mut self) -> Result<Expr, CompileError> {
@@ -466,15 +412,9 @@ impl<'t, 's> Parser<'t, 's> {
 
     /// Consume `( expr )`. `label` shows up in the `expected (` error.
     fn parse_paren_arg(&mut self, label: &str) -> Result<Expr, CompileError> {
-        if !matches!(self.peek(), Tok::LParen) {
-            return self.err(&format!("`(` after {label}"));
-        }
-        self.advance();
+        self.expect(Tok::LParen, &format!("`(` after {label}"))?;
         let arg = self.parse_pipeline_no_comma()?;
-        if !matches!(self.peek(), Tok::RParen) {
-            return self.err("`)`");
-        }
-        self.advance();
+        self.expect(Tok::RParen, "`)`")?;
         Ok(arg)
     }
 
@@ -482,24 +422,15 @@ impl<'t, 's> Parser<'t, 's> {
     /// read as its string literal. Used by `:lang(rust)` / `:text(foo)`,
     /// where the ident would otherwise dispatch as a builtin.
     fn parse_ident_or_string_arg(&mut self, label: &str) -> Result<Expr, CompileError> {
-        if !matches!(self.peek(), Tok::LParen) {
-            return self.err(&format!("`(` after {label}"));
-        }
-        self.advance();
-        let arg = if let Tok::Ident(name) = self.peek().clone() {
-            if matches!(self.peek_n(1), Tok::RParen) {
+        self.expect(Tok::LParen, &format!("`(` after {label}"))?;
+        let arg = match self.peek().clone() {
+            Tok::Ident(name) if matches!(self.peek_n(1), Tok::RParen) => {
                 self.advance();
                 Expr::Lit(Literal::String(Arc::from(name)))
-            } else {
-                self.parse_pipeline_no_comma()?
             }
-        } else {
-            self.parse_pipeline_no_comma()?
+            _ => self.parse_pipeline_no_comma()?,
         };
-        if !matches!(self.peek(), Tok::RParen) {
-            return self.err("`)`");
-        }
-        self.advance();
+        self.expect(Tok::RParen, "`)`")?;
         Ok(arg)
     }
 
@@ -532,11 +463,7 @@ impl<'t, 's> Parser<'t, 's> {
             Tok::LParen => {
                 self.advance();
                 let inner = self.parse_pipeline()?;
-                if matches!(self.peek(), Tok::RParen) {
-                    self.advance();
-                } else {
-                    return self.err("`)`");
-                }
+                self.expect(Tok::RParen, "`)`")?;
                 Ok(inner)
             }
             Tok::LBracket => {
@@ -552,10 +479,7 @@ impl<'t, 's> Parser<'t, 's> {
                     })));
                 }
                 let inner = self.parse_pipeline()?;
-                if !matches!(self.peek(), Tok::RBracket) {
-                    return self.err("`]`");
-                }
-                self.advance();
+                self.expect(Tok::RBracket, "`]`")?;
                 Ok(Expr::ArrayCtor(Box::new(inner)))
             }
             Tok::LBrace => self.parse_object_ctor(),
@@ -584,10 +508,7 @@ impl<'t, 's> Parser<'t, 's> {
                 let args = if matches!(self.peek(), Tok::LParen) {
                     self.advance();
                     let a = self.parse_args()?;
-                    if !matches!(self.peek(), Tok::RParen) {
-                        return self.err("`)`");
-                    }
-                    self.advance();
+                    self.expect(Tok::RParen, "`)`")?;
                     a
                 } else {
                     Vec::new()
@@ -652,10 +573,7 @@ impl<'t, 's> Parser<'t, 's> {
                 }
             }
         }
-        if !matches!(self.peek(), Tok::RBrace) {
-            return self.err("`}`");
-        }
-        self.advance();
+        self.expect(Tok::RBrace, "`}`")?;
         Ok(Expr::ObjectCtor(entries))
     }
 
@@ -672,10 +590,7 @@ impl<'t, 's> Parser<'t, 's> {
             Tok::LParen => {
                 self.advance();
                 let inner = self.parse_pipeline()?;
-                if !matches!(self.peek(), Tok::RParen) {
-                    return self.err("`)`");
-                }
-                self.advance();
+                self.expect(Tok::RParen, "`)`")?;
                 Ok((ObjKey::Expr(inner), false))
             }
             _ => self.err("object key"),
@@ -696,20 +611,14 @@ impl<'t, 's> Parser<'t, 's> {
                 self.parse_pipeline().map(Box::new)
             })
             .transpose()?;
-        if !matches!(self.peek(), Tok::KwEnd) {
-            return self.err("`end`");
-        }
-        self.advance();
+        self.expect(Tok::KwEnd, "`end`")?;
         Ok(Expr::If { branches, else_branch })
     }
 
     /// Parse `cond then branch`. Used once for `if` and N times for `elif`.
     fn parse_then_clause(&mut self) -> Result<(Expr, Expr), CompileError> {
         let cond = self.parse_pipeline()?;
-        if !matches!(self.peek(), Tok::KwThen) {
-            return self.err("`then`");
-        }
-        self.advance();
+        self.expect(Tok::KwThen, "`then`")?;
         let then_branch = self.parse_pipeline()?;
         Ok((cond, then_branch))
     }
@@ -741,52 +650,50 @@ impl<'t, 's> Parser<'t, 's> {
     /// Parse `reduce SRC as $x (INIT; UPDATE)`. The `reduce` ident is
     /// already consumed.
     fn parse_reduce(&mut self) -> Result<Expr, CompileError> {
-        let source = self.parse_alt()?;
-        let var = self.expect_as_var()?;
-        self.expect(Tok::LParen, "`(`")?;
-        let init = self.parse_pipeline_no_comma()?;
-        self.expect(Tok::Semicolon, "`;`")?;
-        let update = self.parse_pipeline_no_comma()?;
-        self.expect(Tok::RParen, "`)`")?;
+        let (source, var, mut parts) = self.parse_fold_head(2)?;
         Ok(Expr::Reduce {
             source: Box::new(source),
             var,
-            init: Box::new(init),
-            update: Box::new(update),
+            update: Box::new(parts.remove(1)),
+            init: Box::new(parts.remove(0)),
         })
     }
 
     /// Parse `foreach SRC as $x (INIT; UPDATE; EXTRACT)`.
     fn parse_foreach(&mut self) -> Result<Expr, CompileError> {
-        let source = self.parse_alt()?;
-        let var = self.expect_as_var()?;
-        self.expect(Tok::LParen, "`(`")?;
-        let init = self.parse_pipeline_no_comma()?;
-        self.expect(Tok::Semicolon, "`;`")?;
-        let update = self.parse_pipeline_no_comma()?;
-        self.expect(Tok::Semicolon, "`;`")?;
-        let extract = self.parse_pipeline_no_comma()?;
-        self.expect(Tok::RParen, "`)`")?;
+        let (source, var, mut parts) = self.parse_fold_head(3)?;
         Ok(Expr::Foreach {
             source: Box::new(source),
             var,
-            init: Box::new(init),
-            update: Box::new(update),
-            extract: Box::new(extract),
+            extract: Box::new(parts.remove(2)),
+            update: Box::new(parts.remove(1)),
+            init: Box::new(parts.remove(0)),
         })
+    }
+
+    /// Shared head: `SRC as $x ( P1; P2; ... )`. Returns the source,
+    /// variable name, and `n_parts` parenthesised sub-expressions.
+    fn parse_fold_head(&mut self, n_parts: usize) -> Result<(Expr, Arc<str>, Vec<Expr>), CompileError> {
+        let source = self.parse_alt()?;
+        let var = self.expect_as_var()?;
+        self.expect(Tok::LParen, "`(`")?;
+        let mut parts = Vec::with_capacity(n_parts);
+        for i in 0..n_parts {
+            if i > 0 {
+                self.expect(Tok::Semicolon, "`;`")?;
+            }
+            parts.push(self.parse_pipeline_no_comma()?);
+        }
+        self.expect(Tok::RParen, "`)`")?;
+        Ok((source, var, parts))
     }
 
     /// Expect `as $name` and return the name.
     fn expect_as_var(&mut self) -> Result<Arc<str>, CompileError> {
         self.expect(Tok::KwAs, "`as`")?;
-        let name = match self.peek().clone() {
-            Tok::DollarIdent(n) => {
-                self.advance();
-                Arc::<str>::from(n)
-            }
-            _ => return self.err("`$name`"),
-        };
-        Ok(name)
+        let Tok::DollarIdent(n) = self.peek().clone() else { return self.err("`$name`"); };
+        self.advance();
+        Ok(Arc::from(n))
     }
 
     /// Assert the current token matches `expected`. Consumes on match.
