@@ -210,52 +210,23 @@ pub fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Short paths that don't touch the aggregation logic.
     if args.null_input {
-        return emit_stream(
-            query.run_with_env(Value::Null, env),
-            "",
-            None,
-            format,
-            &args,
-            &mut stdout,
-        );
+        return emit_stream(query.run_with_env(Value::Null, env), "", None, format, &args, &mut stdout);
     }
     if args.stdin {
         let mut buf = String::new();
         io::Read::read_to_string(&mut io::stdin(), &mut buf)?;
-        let input = if args.raw_input {
-            Value::from(buf.clone())
-        } else {
-            Value::from(crate::events::build_tree_from_source(&buf))
-        };
-        return emit_stream(
-            query.run_with_env(input, env),
-            &buf,
-            None,
-            format,
-            &args,
-            &mut stdout,
-        );
-    }
-    if args.raw_input {
-        // Same shape as per-file but the value bound to `.` is the
-        // raw source string, not a parsed tree.
-        for path in &inputs {
-            let source = fs::read_to_string(path)?;
-            emit_stream(
-                query.run_with_env(Value::from(source.clone()), env.clone()),
-                &source,
-                Some(path),
-                format,
-                &args,
-                &mut stdout,
-            )?;
-        }
-        return Ok(());
+        let input = if args.raw_input { Value::from(buf.clone()) } else { Value::from(crate::events::build_tree_from_source(&buf)) };
+        return emit_stream(query.run_with_env(input, env), &buf, None, format, &args, &mut stdout);
     }
 
     match aggregation {
+        _ if args.raw_input => {
+            for path in &inputs {
+                let source = fs::read_to_string(path)?;
+                emit_stream(query.run_with_env(Value::from(source.clone()), env.clone()), &source, Some(path), format, &args, &mut stdout)?;
+            }
+        }
         Aggregation::PerFile if args.workers != 1 && !matches!(format, OutputFormat::Tty) => {
             run_per_file_parallel(&query, &inputs, &env, format, &args, &mut stdout)?;
         }
@@ -263,27 +234,12 @@ pub fn run() -> anyhow::Result<()> {
             for path in &inputs {
                 let source = fs::read_to_string(path)?;
                 let root = crate::events::build_tree_from_source(&source);
-                emit_stream(
-                    query.run_with_env(Value::from(root), env.clone()),
-                    &source,
-                    Some(path),
-                    format,
-                    &args,
-                    &mut stdout,
-                )?;
+                emit_stream(query.run_with_env(Value::from(root), env.clone()), &source, Some(path), format, &args, &mut stdout)?;
             }
         }
         Aggregation::Slurp => {
-            let roots: Vec<Value> = read_all_roots(&inputs)?;
-            let input = Value::Array(std::sync::Arc::new(roots));
-            emit_stream(
-                query.run_with_env(input, env),
-                "",
-                None,
-                format,
-                &args,
-                &mut stdout,
-            )?;
+            let input = Value::Array(std::sync::Arc::new(read_all_roots(&inputs)?));
+            emit_stream(query.run_with_env(input, env), "", None, format, &args, &mut stdout)?;
         }
         Aggregation::Merge => {
             let mut virt = crate::ast::Node::new(crate::ast::NodeKind::Root);
@@ -291,14 +247,7 @@ pub fn run() -> anyhow::Result<()> {
                 let source = fs::read_to_string(path)?;
                 virt.children.extend(crate::events::build_tree_from_source(&source).children);
             }
-            emit_stream(
-                query.run_with_env(Value::from(virt), env),
-                "",
-                None,
-                format,
-                &args,
-                &mut stdout,
-            )?;
+            emit_stream(query.run_with_env(Value::from(virt), env), "", None, format, &args, &mut stdout)?;
         }
     }
     Ok(())
@@ -319,29 +268,29 @@ fn build_env(args: &Args) -> anyhow::Result<crate::Env> {
 }
 
 /// Drive the result iterator into the writer. `path` is set when the
-/// stream came from a specific file; it's tagged onto JSON output
-/// under `--with-path`.
-fn emit_stream(
+/// stream came from a specific file; tagged onto JSON output under
+/// `--with-path`.
+fn emit_stream<W: io::Write>(
     stream: Box<dyn Iterator<Item = Result<Value, crate::RunError>>>,
     source: &str,
     path: Option<&Path>,
     format: OutputFormat,
     args: &Args,
-    stdout: &mut io::BufWriter<io::StdoutLock<'_>>,
+    out: &mut W,
 ) -> anyhow::Result<()> {
     for r in stream {
         let value = r.map_err(|e| match path {
             Some(p) => anyhow::anyhow!("runtime error in {}: {e}", p.display()),
             None => anyhow::anyhow!("runtime error: {e}"),
         })?;
-        let tagged_owner;
+        let tagged;
         let out_value = if args.with_path && matches!(format, OutputFormat::Json) {
-            tagged_owner = tag_with_path(&value, path);
-            &tagged_owner
+            tagged = tag_with_path(&value, path);
+            &tagged
         } else {
             &value
         };
-        emit_value(stdout, out_value, format, args, source)?;
+        emit_value(out, out_value, format, args, source)?;
     }
     Ok(())
 }
@@ -350,17 +299,14 @@ fn emit_stream(
 /// `--with-path --output json` still emits one object per result.
 fn tag_with_path(value: &Value, path: Option<&Path>) -> Value {
     use std::collections::BTreeMap;
-    let mut obj: BTreeMap<String, Value> = BTreeMap::new();
     let path_str = path.map(|p| p.display().to_string()).unwrap_or_default();
-    obj.insert("path".into(), Value::from(path_str));
-    obj.insert("value".into(), value.clone());
+    let obj: BTreeMap<String, Value> = [("path".into(), Value::from(path_str)), ("value".into(), value.clone())].into();
     Value::Object(std::sync::Arc::new(obj))
 }
 
-/// Parallel per-file query dispatch. Each worker parses its file,
-/// runs the query, and serialises results into a per-file buffer.
-/// Buffers stream back to stdout in the original input order so the
-/// output is identical to the serial path.
+/// Parallel per-file query dispatch. Each worker parses, runs, and
+/// serialises results into a per-file buffer. Buffers flush in input
+/// order so output matches the serial path.
 fn run_per_file_parallel(
     query: &crate::Query,
     inputs: &[PathBuf],
@@ -375,28 +321,13 @@ fn run_per_file_parallel(
         .build()
         .map_err(|e| anyhow::anyhow!("thread pool: {e}"))?;
     let bufs: Vec<anyhow::Result<Vec<u8>>> = pool.install(|| {
-        inputs
-            .par_iter()
-            .map(|path| {
-                let source = fs::read_to_string(path)?;
-                let root = crate::events::build_tree_from_source(&source);
-                let mut buf: Vec<u8> = Vec::new();
-                for r in query.run_with_env(Value::from(root), env.clone()) {
-                    let value = r.map_err(|e| {
-                        anyhow::anyhow!("runtime error in {}: {e}", path.display())
-                    })?;
-                    let tagged;
-                    let out_value = if args.with_path && matches!(format, OutputFormat::Json) {
-                        tagged = tag_with_path(&value, Some(path));
-                        &tagged
-                    } else {
-                        &value
-                    };
-                    emit_value(&mut buf, out_value, format, args, &source)?;
-                }
-                Ok(buf)
-            })
-            .collect()
+        inputs.par_iter().map(|path| {
+            let source = fs::read_to_string(path)?;
+            let root = crate::events::build_tree_from_source(&source);
+            let mut buf: Vec<u8> = Vec::new();
+            emit_stream(query.run_with_env(Value::from(root), env.clone()), &source, Some(path), format, args, &mut buf)?;
+            Ok(buf)
+        }).collect()
     });
     for buf in bufs {
         stdout.write_all(&buf?)?;
