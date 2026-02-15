@@ -5,6 +5,7 @@
 //! parser; jq classics (`select`, `map`, `type`, `length`, `sub`,
 //! `gsub`, ...) match the jq spec across every Value variant.
 
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use regex::Regex;
@@ -136,6 +137,11 @@ fn type_err(expected: &str, got: &Value) -> RunError {
     }
 }
 
+/// First output of `expr` against `input`. Empty stream → `None`.
+fn eval_first(expr: &Expr, input: &Value, env: &Env) -> Result<Option<Value>, RunError> {
+    eval::eval(expr, input.clone(), env).next().transpose()
+}
+
 // --- markdown filters --------------------------------------------------------
 
 fn descendants(input: Value, kind: NodeKind) -> Stream {
@@ -161,11 +167,9 @@ fn collect(v: &Value, kind: NodeKind, out: &mut Vec<Value>) {
 fn headings_at(input: Value, level: i64) -> Stream {
     let mut all = Vec::new();
     collect(&input, NodeKind::Heading, &mut all);
-    let out: Vec<Value> = all
-        .into_iter()
-        .filter(|v| matches!(v, Value::Node(n) if heading_level(n) == level))
-        .collect();
-    Box::new(out.into_iter().map(Ok))
+    Box::new(all.into_iter()
+        .filter(move |v| matches!(v, Value::Node(n) if heading_level(n) == level))
+        .map(Ok))
 }
 
 fn heading_level(n: &Node) -> i64 {
@@ -179,20 +183,17 @@ fn section(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("section/1: expected one argument".into()));
     }
-    let name = match eval::eval_expr(&args[0], input.clone(), env).next() {
-        Some(Ok(Value::String(s))) => s.to_string(),
-        Some(Ok(other)) => return err(type_err("string", &other)),
-        Some(Err(e)) => return err(e),
-        None => return Box::new(std::iter::empty()),
+    let name = match eval_first(&args[0], &input, env) {
+        Ok(Some(Value::String(s))) => s.to_string(),
+        Ok(Some(other)) => return err(type_err("string", &other)),
+        Ok(None) => return Box::new(std::iter::empty()),
+        Err(e) => return err(e),
     };
-    let Value::Node(root) = input else {
-        return err(RunError::Type {
-            expected: "node".into(),
-            got: "non-node".into(),
-        });
+    let Value::Node(root) = &input else {
+        return err(type_err("node", &input));
     };
     let mut out = Vec::new();
-    build_sections(&root, &name, &mut out);
+    build_sections(root, &name, &mut out);
     Box::new(out.into_iter().map(Ok))
 }
 
@@ -259,63 +260,47 @@ fn length_of(v: &Value) -> Result<Value, RunError> {
     Ok(Value::from(n))
 }
 
-/// Stream every `Cell` child of the input node (expected: a Row).
-/// For a Table input, streams cells from every row.
 fn cells_of(input: Value) -> Stream {
     match &input {
         Value::Node(n) if n.kind == NodeKind::Row => {
-            descendants_shallow(&input, NodeKind::Cell)
+            let out: Vec<Value> = n.children.iter()
+                .filter(|c| matches!(c, Value::Node(child) if child.kind == NodeKind::Cell))
+                .cloned()
+                .collect();
+            Box::new(out.into_iter().map(Ok))
         }
         Value::Node(_) => descendants(input, NodeKind::Cell),
         _ => err(type_err("node", &input)),
     }
 }
 
-/// First-row cells of each Table in the input. Yields one Cell node
-/// per header across every descendant table.
+/// First-row cells of each Table in the input.
 fn headers_of(input: Value) -> Stream {
     let mut tables = Vec::new();
     collect(&input, NodeKind::Table, &mut tables);
-    let mut out = Vec::new();
-    for t in tables {
-        let Value::Node(table) = t else { continue };
-        let Some(Value::Node(first_row)) = table.children.iter().find(|c| {
-            matches!(c, Value::Node(n) if n.kind == NodeKind::Row)
-        }) else {
-            continue;
-        };
-        for cell in &first_row.children {
-            if matches!(cell, Value::Node(n) if n.kind == NodeKind::Cell) {
-                out.push(cell.clone());
-            }
-        }
-    }
-    Box::new(out.into_iter().map(Ok))
-}
-
-fn descendants_shallow(input: &Value, kind: NodeKind) -> Stream {
-    let Value::Node(n) = input else {
-        return Box::new(std::iter::empty());
-    };
-    let out: Vec<Value> = n
-        .children
-        .iter()
-        .filter(|c| matches!(c, Value::Node(child) if child.kind == kind))
-        .cloned()
+    let out: Vec<Value> = tables.iter()
+        .filter_map(|t| match t { Value::Node(n) => Some(n), _ => None })
+        .filter_map(|table| table.children.iter().find_map(|c| match c {
+            Value::Node(n) if n.kind == NodeKind::Row => Some(n.clone()),
+            _ => None,
+        }))
+        .flat_map(|row| row.children.iter()
+            .filter(|c| matches!(c, Value::Node(n) if n.kind == NodeKind::Cell))
+            .cloned()
+            .collect::<Vec<_>>())
         .collect();
     Box::new(out.into_iter().map(Ok))
 }
 
-/// `error(msg)` raises a runtime error carrying `msg`. With no
-/// argument, `input` must already be a string. `try` / `?` can
-/// catch it.
+/// `error(msg)` raises a runtime error. With no argument, `input`
+/// must already be a string. `try` / `?` can catch it.
 fn error_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
     let msg = match args.first() {
-        Some(expr) => match eval::eval_expr(expr, input, env).next() {
-            Some(Ok(Value::String(s))) => s.to_string(),
-            Some(Ok(other)) => return err(type_err("string", &other)),
-            Some(Err(e)) => return err(e),
-            None => return Box::new(std::iter::empty()),
+        Some(expr) => match eval_first(expr, &input, env) {
+            Ok(Some(Value::String(s))) => s.to_string(),
+            Ok(Some(other)) => return err(type_err("string", &other)),
+            Ok(None) => return Box::new(std::iter::empty()),
+            Err(e) => return err(e),
         },
         None => match &input {
             Value::String(s) => s.to_string(),
@@ -331,7 +316,7 @@ fn first_or(args: &[Expr], input: Value, env: &Env, first: bool) -> Stream {
     if args.is_empty() {
         return one(head_or_tail(&input, first));
     }
-    let s = eval::eval_expr(&args[0], input, env);
+    let s = eval::eval(&args[0], input, env);
     let pick = if first {
         s.take(1).next()
     } else {
@@ -356,11 +341,10 @@ fn select(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("select/1 expects one argument".into()));
     }
-    let mut s = eval::eval_expr(&args[0], input.clone(), env);
-    match s.next() {
-        Some(Ok(v)) if v.truthy() => ok(input),
-        Some(Err(e)) => err(e),
-        _ => Box::new(std::iter::empty()),
+    match eval_first(&args[0], &input, env) {
+        Ok(Some(v)) if v.truthy() => ok(input),
+        Ok(_) => Box::new(std::iter::empty()),
+        Err(e) => err(e),
     }
 }
 
@@ -377,7 +361,7 @@ fn map_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
     let expr = args[0].clone();
     let mut out = Vec::with_capacity(items.len());
     for v in items {
-        for r in eval::eval_expr(&expr, v, env) {
+        for r in eval::eval(&expr, v, env) {
             match r {
                 Ok(x) => out.push(x),
                 Err(e) => return err(e),
@@ -391,28 +375,24 @@ fn has(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("has/1 expects one argument".into()));
     }
-    let key = eval::eval_expr(&args[0], input.clone(), env).next();
-    let present = match key {
-        Some(Ok(Value::String(s))) => match &input {
+    let present = match eval_first(&args[0], &input, env) {
+        Ok(Some(Value::String(s))) => match &input {
             Value::Object(m) => m.contains_key(s.as_ref()),
-            Value::Node(n) => {
-                matches!(s.as_ref(), "kind" | "children" | "text" | "attrs")
-                    || n.attrs.contains_key(&*s.to_string())
-            }
+            Value::Node(n) => matches!(s.as_ref(), "kind" | "children" | "text" | "attrs")
+                || n.attrs.contains_key(&*s.to_string()),
             _ => false,
         },
-        Some(Ok(Value::Number(n))) => {
-            let idx = n as isize;
+        Ok(Some(Value::Number(n))) => {
             let len = match &input {
                 Value::Array(a) => a.len() as isize,
                 Value::Node(node) => node.children.len() as isize,
                 _ => 0,
             };
-            idx >= 0 && idx < len
+            (0..len).contains(&(n as isize))
         }
-        Some(Ok(other)) => return err(type_err("string or number key", &other)),
-        Some(Err(e)) => return err(e),
-        None => false,
+        Ok(Some(other)) => return err(type_err("string or number key", &other)),
+        Ok(None) => false,
+        Err(e) => return err(e),
     };
     ok(Value::Bool(present))
 }
@@ -495,15 +475,14 @@ fn to_string_value(v: &Value) -> Result<Value, RunError> {
         Value::Bool(b) => Value::from(if *b { "true" } else { "false" }),
         Value::Number(n) if n.fract() == 0.0 && n.is_finite() => Value::from((*n as i64).to_string()),
         Value::Number(n) => Value::from(n.to_string()),
-        Value::Array(_) | Value::Object(_) => {
-            let json = crate::emit::json::value_to_json(
-                v,
-                crate::emit::json::JsonOptions::COMPACT,
-            );
-            Value::from(serde_json::to_string(&json).unwrap_or_default())
-        }
+        Value::Array(_) | Value::Object(_) => Value::from(json_string(v)),
         Value::Node(n) => Value::from(plain_text(&n.children)),
     })
+}
+
+fn json_string(v: &Value) -> String {
+    let json = crate::emit::json::value_to_json(v, crate::emit::json::JsonOptions::COMPACT);
+    serde_json::to_string(&json).unwrap_or_default()
 }
 
 fn to_number(v: &Value) -> Result<Value, RunError> {
@@ -577,13 +556,10 @@ fn expect_string(v: &Value) -> Result<&str, RunError> {
 }
 
 fn eval_string_arg(arg: Option<&Expr>, input: &Value, env: &Env) -> Result<String, RunError> {
-    let Some(expr) = arg else {
-        return Err(RunError::Other("missing string argument".into()));
-    };
-    match eval::eval_expr(expr, input.clone(), env).next() {
-        Some(Ok(Value::String(s))) => Ok(s.to_string()),
-        Some(Ok(other)) => Err(type_err("string", &other)),
-        Some(Err(e)) => Err(e),
+    let expr = arg.ok_or_else(|| RunError::Other("missing string argument".into()))?;
+    match eval_first(expr, input, env)? {
+        Some(Value::String(s)) => Ok(s.to_string()),
+        Some(other) => Err(type_err("string", &other)),
         None => Err(RunError::Other("argument stream was empty".into())),
     }
 }
@@ -631,12 +607,10 @@ fn trim_side(args: &[Expr], input: &Value, env: &Env, left: bool) -> Result<Valu
 }
 
 fn contains(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
-    let needle = match eval::eval_expr(&args[0], input.clone(), env).next() {
-        Some(Ok(v)) => v,
-        Some(Err(e)) => return Err(e),
-        None => return Ok(Value::Bool(false)),
-    };
-    Ok(Value::Bool(value_contains(input, &needle)))
+    match eval_first(&args[0], input, env)? {
+        Some(needle) => Ok(Value::Bool(value_contains(input, &needle))),
+        None => Ok(Value::Bool(false)),
+    }
 }
 
 fn value_contains(haystack: &Value, needle: &Value) -> bool {
@@ -652,13 +626,9 @@ fn value_contains(haystack: &Value, needle: &Value) -> bool {
     }
 }
 
-#[allow(clippy::unnecessary_wraps)] // called via `one(...)` which takes Result.
+#[allow(clippy::unnecessary_wraps)]
 fn to_json(input: &Value) -> Result<Value, RunError> {
-    let json = crate::emit::json::value_to_json(
-        input,
-        crate::emit::json::JsonOptions::COMPACT,
-    );
-    Ok(Value::from(serde_json::to_string(&json).unwrap_or_default()))
+    Ok(Value::from(json_string(input)))
 }
 
 fn from_json(input: &Value) -> Result<Value, RunError> {
@@ -803,8 +773,7 @@ fn by_key_array(
 fn group_by(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let key_fn = key_fn_arg(args, "group_by")?;
     let arr = expect_array(&input)?;
-    let mut items: Vec<(Value, Value)> = arr
-        .iter()
+    let mut items: Vec<(Value, Value)> = arr.iter()
         .map(|v| eval_key(key_fn, v, env).map(|k| (k, v.clone())))
         .collect::<Result<_, _>>()?;
     items.sort_by(|(ka, _), (kb, _)| eval::value_cmp_for_sort(ka, kb));
@@ -812,64 +781,48 @@ fn group_by(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let mut groups: Vec<Vec<Value>> = Vec::new();
     let mut last_key: Option<Value> = None;
     for (k, v) in items {
-        let new_group = last_key
-            .as_ref()
-            .is_none_or(|prev| !eval::value_cmp_for_sort(prev, &k).is_eq());
-        if new_group {
+        if last_key.as_ref().is_none_or(|prev| !eval::value_cmp_for_sort(prev, &k).is_eq()) {
             groups.push(Vec::new());
             last_key = Some(k);
         }
         groups.last_mut().unwrap().push(v);
     }
-    let out: Vec<Value> = groups
-        .into_iter()
-        .map(|g| Value::Array(Arc::new(g)))
-        .collect();
+    let out: Vec<Value> = groups.into_iter().map(|g| Value::Array(Arc::new(g))).collect();
     Ok(Value::Array(Arc::new(out)))
 }
 
 fn extreme_by(args: &[Expr], input: Value, env: &Env, least: bool) -> Result<Value, RunError> {
     let key_fn = key_fn_arg(args, "min_by/max_by")?;
     let arr = expect_array(&input)?;
-    if arr.is_empty() {
-        return Ok(Value::Null);
-    }
-    let mut best = (eval_key(key_fn, &arr[0], env)?, arr[0].clone());
-    for v in arr.iter().skip(1) {
+    let pick = if least { Ordering::is_lt } else { Ordering::is_gt };
+    let mut best: Option<(Value, Value)> = None;
+    for v in arr {
         let k = eval_key(key_fn, v, env)?;
-        let ord = eval::value_cmp_for_sort(&k, &best.0);
-        let replace = if least { ord.is_lt() } else { ord.is_gt() };
-        if replace {
-            best = (k, v.clone());
+        if best.as_ref().is_none_or(|(bk, _)| pick(eval::value_cmp_for_sort(&k, bk))) {
+            best = Some((k, v.clone()));
         }
     }
-    Ok(best.1)
+    Ok(best.map_or(Value::Null, |(_, v)| v))
 }
 
 fn extreme(input: Value, least: bool) -> Result<Value, RunError> {
     let arr = expect_array(&input)?;
-    if arr.is_empty() {
-        return Ok(Value::Null);
-    }
-    let mut best = &arr[0];
-    for v in arr.iter().skip(1) {
-        let ord = eval::value_cmp_for_sort(v, best);
-        if (least && ord.is_lt()) || (!least && ord.is_gt()) {
-            best = v;
-        }
-    }
-    Ok(best.clone())
+    let pick = if least { Ordering::is_lt } else { Ordering::is_gt };
+    Ok(arr.iter().skip(1)
+        .fold(arr.first(), |best, v| match best {
+            Some(b) if pick(eval::value_cmp_for_sort(v, b)) => Some(v),
+            _ => best,
+        })
+        .cloned()
+        .unwrap_or(Value::Null))
 }
 
 fn key_fn_arg<'a>(args: &'a [Expr], name: &str) -> Result<&'a Expr, RunError> {
-    args.first()
-        .ok_or_else(|| RunError::Other(format!("{name}: expected one argument")))
+    args.first().ok_or_else(|| RunError::Other(format!("{name}: expected one argument")))
 }
 
 fn eval_key(f: &Expr, v: &Value, env: &Env) -> Result<Value, RunError> {
-    eval::eval_expr(f, v.clone(), env)
-        .next()
-        .unwrap_or(Ok(Value::Null))
+    eval_first(f, v, env).map(|o| o.unwrap_or(Value::Null))
 }
 
 fn expect_array(v: &Value) -> Result<&Vec<Value>, RunError> {
@@ -881,26 +834,29 @@ fn expect_array(v: &Value) -> Result<&Vec<Value>, RunError> {
 
 // ---- stream slicing --------------------------------------------------------
 
+/// First output of `expr` coerced to f64. `default` is used when the
+/// argument's stream is empty.
+fn eval_number(expr: &Expr, input: &Value, env: &Env, default: f64) -> Result<f64, RunError> {
+    match eval_first(expr, input, env)? {
+        Some(Value::Number(n)) => Ok(n),
+        Some(other) => Err(type_err("number", &other)),
+        None => Ok(default),
+    }
+}
+
 /// `range(m; n)` yields integers `[m, n)`. `range(m; n; step)` strides.
 fn range(args: &[Expr], input: Value, env: &Env) -> Stream {
-    let evaluated: Result<Vec<f64>, _> = args
-        .iter()
-        .map(|a| match eval::eval_expr(a, input.clone(), env).next() {
-            Some(Ok(Value::Number(n))) => Ok(n),
-            Some(Ok(other)) => Err(type_err("number", &other)),
-            Some(Err(e)) => Err(e),
-            None => Err(RunError::Other("range: empty argument stream".into())),
-        })
-        .collect();
-    let nums = match evaluated {
-        Ok(v) => v,
-        Err(e) => return err(e),
-    };
-    let (start, stop, step) = match nums.as_slice() {
-        [n] => (0.0, *n, 1.0),
-        [m, n] => (*m, *n, 1.0),
-        [m, n, s] => (*m, *n, *s),
-        _ => return err(RunError::Other("range: 1..3 arguments".into())),
+    let nums: Result<Vec<f64>, _> = args.iter().map(|a| match eval_first(a, &input, env)? {
+        Some(Value::Number(n)) => Ok(n),
+        Some(other) => Err(type_err("number", &other)),
+        None => Err(RunError::Other("range: empty argument stream".into())),
+    }).collect();
+    let (start, stop, step) = match nums.as_deref() {
+        Ok([n]) => (0.0, *n, 1.0),
+        Ok([m, n]) => (*m, *n, 1.0),
+        Ok([m, n, s]) => (*m, *n, *s),
+        Ok(_) => return err(RunError::Other("range: 1..3 arguments".into())),
+        Err(e) => return err(e.clone()),
     };
     if step == 0.0 {
         return err(RunError::Other("range: step cannot be zero".into()));
@@ -919,17 +875,14 @@ fn limit(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 2 {
         return err(RunError::Other("limit/2 expects (count; expr)".into()));
     }
-    let n = match eval::eval_expr(&args[0], input.clone(), env).next() {
-        Some(Ok(Value::Number(n))) => n as i64,
-        Some(Ok(other)) => return err(type_err("number", &other)),
-        Some(Err(e)) => return err(e),
-        None => 0,
+    let n = match eval_number(&args[0], &input, env, 0.0) {
+        Ok(n) => n as i64,
+        Err(e) => return err(e),
     };
     if n <= 0 {
         return Box::new(std::iter::empty());
     }
-    let s = eval::eval_expr(&args[1], input, env);
-    let taken: Vec<_> = s.take(n as usize).collect();
+    let taken: Vec<_> = eval::eval(&args[1], input, env).take(n as usize).collect();
     Box::new(taken.into_iter())
 }
 
@@ -938,17 +891,11 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     if args.len() != 2 {
         return Err(RunError::Other("nth/2 expects (index; expr)".into()));
     }
-    let n = match eval::eval_expr(&args[0], input.clone(), env).next() {
-        Some(Ok(Value::Number(n))) => n as i64,
-        Some(Ok(other)) => return Err(type_err("number", &other)),
-        Some(Err(e)) => return Err(e),
-        None => 0,
-    };
+    let n = eval_number(&args[0], &input, env, 0.0)? as i64;
     if n < 0 {
         return Ok(Value::Null);
     }
-    let mut s = eval::eval_expr(&args[1], input, env);
-    s.nth(n as usize).unwrap_or(Ok(Value::Null))
+    eval::eval(&args[1], input, env).nth(n as usize).unwrap_or(Ok(Value::Null))
 }
 
 // ---- paths -----------------------------------------------------------------
@@ -985,10 +932,9 @@ fn collect_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {
 
 /// `getpath(path)` walks an array of keys/indices into `input`.
 fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
-    let path = match eval::eval_expr(&args[0], input.clone(), env).next() {
-        Some(Ok(Value::Array(a))) => a,
-        Some(Ok(other)) => return Err(type_err("array of keys", &other)),
-        Some(Err(e)) => return Err(e),
+    let path = match eval_first(&args[0], &input, env)? {
+        Some(Value::Array(a)) => a,
+        Some(other) => return Err(type_err("array of keys", &other)),
         None => return Ok(Value::Null),
     };
     let mut cur = input;
@@ -1016,16 +962,13 @@ fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     if args.len() != 2 {
         return Err(RunError::Other("setpath/2 expects (path; value)".into()));
     }
-    let path = match eval::eval_expr(&args[0], input.clone(), env).next() {
-        Some(Ok(Value::Array(a))) => a,
-        Some(Ok(other)) => return Err(type_err("array of keys", &other)),
-        Some(Err(e)) => return Err(e),
+    let path = match eval_first(&args[0], &input, env)? {
+        Some(Value::Array(a)) => a,
+        Some(other) => return Err(type_err("array of keys", &other)),
         None => return Ok(input),
     };
-    let value = match eval::eval_expr(&args[1], input.clone(), env).next() {
-        Some(Ok(v)) => v,
-        Some(Err(e)) => return Err(e),
-        None => return Ok(input),
+    let Some(value) = eval_first(&args[1], &input, env)? else {
+        return Ok(input);
     };
     set_path_inner(input, path.as_ref(), value)
 }
@@ -1092,12 +1035,9 @@ fn collect_headings(v: &Value, out: &mut Vec<Arc<Node>>) {
 /// Unknown `.kind` strings default to `paragraph`. The result is
 /// dirty so serialize regenerates it.
 fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
-    let source = if args.is_empty() {
-        input
-    } else {
-        eval::eval_expr(&args[0], input, env)
-            .next()
-            .unwrap_or(Ok(Value::Null))?
+    let source = match args.first() {
+        Some(arg) => eval_first(arg, &input, env)?.unwrap_or(Value::Null),
+        None => input,
     };
     let Value::Object(map) = source else {
         return Err(type_err("object", &source));
