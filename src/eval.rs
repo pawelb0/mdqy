@@ -354,16 +354,15 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
     let outer = input.clone();
     Box::new(eval(l, input, &env).flat_map(move |x| match x {
         Err(e) => once(Err(e)),
-        Ok(lv) => match short_circuit(&lv, op) {
-            Some(v) => once(Ok(v)),
-            None => {
-                let (env, outer) = (env.clone(), outer.clone());
-                Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| apply_bin(&lv, op, &rv)))) as Stream
+        Ok(lv) => {
+            if let Some(v) = short_circuit(&lv, op) {
+                return once(Ok(v));
             }
+            let (env, outer) = (env.clone(), outer.clone());
+            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| apply_bin(&lv, op, &rv)))) as Stream
         }
     }))
 }
-
 
 /// Decide on `and`/`or`/`//` from the LHS alone, or `None` to fall
 /// through and evaluate the RHS.
