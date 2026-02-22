@@ -203,21 +203,27 @@ pub fn run() -> anyhow::Result<()> {
 
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
-    if args.in_place || args.dry_run || !query.is_read_only() {
-        for path in &inputs {
-            run_transform(&query, path, &args, &mut stdout)?;
-        }
-        return Ok(());
-    }
-
     if args.null_input {
         return emit_stream(query.run_with_env(Value::Null, env), "", None, format, &args, &mut stdout);
     }
     if args.stdin {
         let mut buf = String::new();
         io::Read::read_to_string(&mut io::stdin(), &mut buf)?;
+        if !query.is_read_only() && !args.raw_input {
+            let new_bytes = query.transform_bytes(buf.as_bytes())
+                .map_err(|e| anyhow::anyhow!("transform: {e}"))?;
+            stdout.write_all(&new_bytes)?;
+            return Ok(());
+        }
         let input = if args.raw_input { Value::from(buf.clone()) } else { Value::from(crate::events::build_tree_from_source(&buf)) };
         return emit_stream(query.run_with_env(input, env), &buf, None, format, &args, &mut stdout);
+    }
+
+    if args.in_place || args.dry_run || !query.is_read_only() {
+        for path in &inputs {
+            run_transform(&query, path, &args, &mut stdout)?;
+        }
+        return Ok(());
     }
 
     match aggregation {
