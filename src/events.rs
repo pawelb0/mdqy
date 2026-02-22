@@ -239,6 +239,10 @@ fn finalize_node(node: &mut Node, _: TagEnd) {
         node.attrs.insert(attr::LITERAL, Value::from(literal));
         node.children.clear();
     }
+    if node.kind == NodeKind::Image {
+        let alt = plain_text(&node.children);
+        node.attrs.insert(attr::ALT, Value::from(alt));
+    }
 }
 
 fn push_plain(out: &mut String, children: &[Value]) {
