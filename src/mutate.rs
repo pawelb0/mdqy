@@ -70,23 +70,29 @@ fn walk_tree(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
         }
     }
 
-    let mut current = (*node).clone();
-    current.children = new_children;
-    let current_arc = Arc::new(current);
-    let mut updated = apply_walk_f(f, current_arc.clone())?;
+    // Reuse the original arc when nothing under it changed; otherwise
+    // the `current_arc` clone defeats the serializer's clean-subtree
+    // fast path and `walk(.)` would regenerate every node.
+    let target = if descendant_mutated {
+        let mut current = (*node).clone();
+        current.children = new_children;
+        Arc::new(current)
+    } else {
+        node
+    };
 
-    if descendant_mutated && Arc::ptr_eq(&updated, &current_arc) {
-        // `f` left the node alone but we rebuilt children. Clone to
-        // carry the new children through instead of dropping them.
-        let mut n = (*current_arc).clone();
-        n.dirty = true;
-        updated = Arc::new(n);
-    } else if !Arc::ptr_eq(&updated, &node) {
+    let updated = apply_walk_f(f, target.clone())?;
+    if !Arc::ptr_eq(&updated, &target) {
         let mut n = (*updated).clone();
         n.dirty = true;
-        updated = Arc::new(n);
+        return Ok(Arc::new(n));
     }
-    Ok(updated)
+    if descendant_mutated {
+        let mut n = (*target).clone();
+        n.dirty = true;
+        return Ok(Arc::new(n));
+    }
+    Ok(target)
 }
 
 /// Mini-interpreter for `walk(f)`'s body. `crate::eval` rejects
