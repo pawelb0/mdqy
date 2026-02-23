@@ -8,15 +8,11 @@
 #
 # Exits 0 if every test passes, 1 if any fails.
 #
-# Known bugs surfaced (as of authoring):
-#   - walk(.) on a clean tree marks every node dirty, so md output
-#     is not byte-exact (cmark-regenerated).
+# Known divergences this script asserts as failures (so regressions
+# resurface immediately):
 #   - `not` lexes as Tok::KwNot and only parses as a unary prefix,
 #     so `5 | not` is a parse error (jq accepts both forms).
 #   - `try EXPR` form unsupported; only `EXPR?` works.
-#   - Image alt text is not lifted to an `alt` attribute.
-#   - Mutation expressions (`|=` / del / walk) on --stdin silently
-#     produce no output: stdin path bypasses the transform branch.
 #   - `length` on a number errors out; jq returns abs(n).
 #   - `ascii_upcase` / `ascii_downcase` only handle ASCII
 #     (intentional per builtins.rs, divergent from jq).
@@ -418,9 +414,9 @@ ts_in M_walk_bump "## Tiny" "$TINY" \
 # walk(.) keeps text content (even if not byte-exact).
 ts_in M_walk_text "Tiny" "$TINY" 'walk(.)' --output md
 
-# del then read: `null` after delete.
-ts_in M_del_readback "null" "$DOC_TITLED" \
-    'del((.. | select(type == "link")).title) | links | .title'
+# del then output: title gone from emitted markdown.
+ts_nin M_del_title_in_output "title" "$DOC_TITLED" \
+    'del((.. | select(type == "link")).title)' --output md
 
 # `=` (set) still NotImplemented; should fail when run via -U.
 TFI=$(mktemp "$TMP/setfail.XXXXXX.md"); printf '%s' "$DOC_HTTP" > "$TFI"
