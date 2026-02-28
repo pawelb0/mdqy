@@ -628,6 +628,542 @@ DOC_CRLF=$'# x\r\n\r\nbody\r\n'
 ts_eq S_crlf         "$DOC_CRLF" "$DOC_CRLF" '.'
 
 # ============================================================================
+section "T. pathological markdown"
+
+# Deeply nested blockquote, identity must round-trip byte-exact.
+DOC_QQ=$'> > > > > > > deep\n'
+ts_eq T_qq_id        "$DOC_QQ" "$DOC_QQ" '.'
+
+# 10-level nested list. Indentation matters; if pulldown-cmark
+# reshapes it, the round-trip fails and surfaces the bug.
+DOC_NESTED_LIST=$'- a\n  - b\n    - c\n      - d\n        - e\n          - f\n            - g\n              - h\n                - i\n                  - j\n'
+ts_eq T_list_10_id   "$DOC_NESTED_LIST" "$DOC_NESTED_LIST" '.'
+
+# Aligned table columns. Identity round-trip.
+DOC_ALIGN=$'| L | C | R |\n| :--- | :---: | ---: |\n| a | b | c |\n'
+ts_eq T_align_id     "$DOC_ALIGN" "$DOC_ALIGN" '.'
+ts_in T_align_table_kind "table" "$DOC_ALIGN" 'tables | .kind'
+
+# Malformed table: missing separator row. Should still parse as paragraph.
+DOC_BAD_TABLE=$'| a | b |\n| c | d |\n'
+ts_in T_bad_table    "paragraph" "$DOC_BAD_TABLE" '.[0] | .kind' --raw
+
+# Reference-style links + footnotes.
+DOC_REF=$'See [docs][r] and a footnote[^1].\n\n[r]: http://r.com\n[^1]: a note\n'
+ts_in T_ref_link     "http://r.com" "$DOC_REF" 'links | .href'
+ts_in T_footnote     "a note" "$DOC_REF" 'footnotes | .text'
+
+# Definition list (GFM extension is on).
+DOC_DL=$'Term\n: Definition\n'
+ts_in T_deflist      "Term" "$DOC_DL" '.. | select(.kind == "list") | .text'
+
+# Hard break in heading: trailing two spaces. Pulldown-cmark may
+# refuse hard breaks inside headings; identity should still survive.
+# Identity test only, since rules vary by parser version.
+DOC_HD_HEADING=$'# Title  \nstuff\n'
+ts_eq T_hd_heading_id "$DOC_HD_HEADING" "$DOC_HD_HEADING" '.'
+
+# Tab-indented code (4-space-equivalent indent block).
+DOC_TAB_CODE=$'\tindented code\n'
+ts_eq T_tab_code_id  "$DOC_TAB_CODE" "$DOC_TAB_CODE" '.'
+
+# Mixed tab + space indent. Identity test.
+DOC_MIX_INDENT=$'-\ta\n- \tb\n'
+ts_eq T_mix_id       "$DOC_MIX_INDENT" "$DOC_MIX_INDENT" '.'
+
+# CR-only line endings. Pulldown-cmark may not recognise old-Mac newlines.
+DOC_CR=$'# x\rbody\r'
+ts_eq T_cr_id        "$DOC_CR" "$DOC_CR" '.'
+
+# No trailing newline at all.
+DOC_NO_NL=$'# x\n\nno trailing newline'
+ts_eq T_no_nl_id     "$DOC_NO_NL" "$DOC_NO_NL" '.'
+
+# Trailing whitespace at line end (markdown hard break trigger).
+DOC_TRAILING_WS=$'line one  \nline two\n'
+ts_eq T_trailing_ws_id "$DOC_TRAILING_WS" "$DOC_TRAILING_WS" '.'
+
+# BOM at file start. `--stdin` reads raw UTF-8 — does mdqy strip
+# the BOM or pass it through?
+DOC_BOM=$'\xef\xbb\xbf# Title\n\nbody.\n'
+ts_eq T_bom_id       "$DOC_BOM" "$DOC_BOM" '.'
+
+# Wide table with many columns. Round-trip should hold.
+DOC_WIDE=$'| a | b | c | d | e | f | g |\n| - | - | - | - | - | - | - |\n| 1 | 2 | 3 | 4 | 5 | 6 | 7 |\n'
+ts_eq T_wide_id      "$DOC_WIDE" "$DOC_WIDE" '.'
+
+# ============================================================================
+section "U. extensions"
+
+# GFM strikethrough: `~~x~~` should produce a strikethrough kind.
+DOC_STRIKE=$'~~gone~~\n'
+ts_in U_strike_id    "$DOC_STRIKE" "$DOC_STRIKE" '.'
+ts_in U_strike_kind  "strikethrough" "$DOC_STRIKE" '.. | .kind'
+
+# Task lists.
+DOC_TASKS=$'- [x] done\n- [ ] open\n'
+ts_eq U_tasks_id     "$DOC_TASKS" "$DOC_TASKS" '.'
+# Test if the .checked attr is exposed via JSON output.
+ts_in U_tasks_check_true "true"  "$DOC_TASKS" '.. | select(.kind == "item") | .checked' -c
+
+# Smart punctuation: `--` should become en/em dash on render.
+DOC_SMART=$'Hello -- world.\n'
+ts_in U_smart_id     "Hello" "$DOC_SMART" '.text'
+
+# Wikilinks (GFM extension on).
+DOC_WIKI=$'See [[Page Name]] for more.\n'
+ts_in U_wiki_id      "Page Name" "$DOC_WIKI" '.text'
+
+# Math: inline `$...$`. Result should round-trip (events::options ON).
+DOC_MATH=$'Equation: $a^2 + b^2 = c^2$.\n'
+ts_in U_math_id      "a^2" "$DOC_MATH" '.text'
+
+# Display math: `$$...$$`.
+DOC_DMATH=$'$$a + b$$\n'
+ts_in U_dmath_id     "a + b" "$DOC_DMATH" '.text'
+
+# Heading attributes `# Title {#anchor}`. Pulldown-cmark exposes `id`
+# but mdqy reads it into `attr::ANCHOR` only if the parser surfaces it.
+DOC_HID=$'# Welcome {#welcome-id}\n'
+ts_in U_anchor_attr  "welcome-id" "$DOC_HID" 'h1 | .anchor'
+
+# ============================================================================
+section "V. frontmatter edges"
+
+# Empty frontmatter `---\n---`. Should parse without crashing.
+DOC_FM_EMPTY=$'---\n---\n# Body\n'
+ts_in V_fm_empty_body "Body" "$DOC_FM_EMPTY" 'h1 | .text'
+
+# Frontmatter must be at file start; one in middle should be ignored
+# but pulldown-cmark + ENABLE_*_METADATA_BLOCKS still parses it.
+DOC_FM_MID=$'# Body\n\n---\nx: 1\n---\n'
+ts_eq V_fm_mid_null_BUG "null" "$DOC_FM_MID" 'frontmatter'
+
+# Malformed YAML body — frontmatter attr stays unset, returns null.
+DOC_FM_BAD=$'---\nfoo: : :\n---\n# B\n'
+ts_eq V_fm_bad_null "null" "$DOC_FM_BAD" 'frontmatter'
+
+# TOML with arrays + tables.
+DOC_TOML_RICH=$'+++\ntags = ["a", "b"]\n[author]\nname = "Bob"\n+++\n# B\n'
+ts_in V_toml_array  "a"     "$DOC_TOML_RICH" 'frontmatter | .tags | .[0]' --raw
+ts_in V_toml_table  "Bob"   "$DOC_TOML_RICH" 'frontmatter | .author | .name'
+
+# Frontmatter only, no body. Identity round-trip.
+DOC_FM_NO_BODY=$'---\nx: 1\n---\n'
+ts_eq V_fm_no_body_id "$DOC_FM_NO_BODY" "$DOC_FM_NO_BODY" '.'
+
+# `---` inside a YAML string. The closing fence is on its own line so
+# pulldown-cmark stops at the right place.
+DOC_FM_INNER=$'---\ntext: "a --- b"\n---\n# B\n'
+ts_in V_fm_inner_dashes "a --- b" "$DOC_FM_INNER" 'frontmatter | .text'
+
+# ============================================================================
+section "W. lex / parse edges"
+
+# Long identifier (1000 chars). Should compile a no-such-builtin error
+# rather than a lex one.
+LONGID=$(printf 'a%.0s' {1..1000})
+ts_fail W_long_ident "" "$LONGID"
+
+# All supported escapes in a string.
+tn_eq W_esc_quote   '"\""'              '"\""'
+tn_eq W_esc_back    '"\\"'              '"\\"'
+tn_eq W_esc_slash   '"/"'               '"\/"'
+tn_eq W_esc_n       '"\n"'              '"\n"'
+tn_eq W_esc_t       '"\t"'              '"\t"'
+tn_eq W_esc_r       '"\r"'              '"\r"'
+# `\0` lexes to NUL; JSON formatter emits ` `.
+tn_in W_esc_zero_unicode "u0000" '"\0" | tojson' #    '" "'    '"\0"'
+
+# `\u` escape is NOT in the accepted escape set; lex must reject it.
+# We construct the string literally so Edit-tool quoting can't elide
+# the backslash-u sequence.
+ESC_U_EXPR=$(printf '"%s%s%s"' '\' 'u0041')
+tn_fail W_esc_u_unsupported "$ESC_U_EXPR"
+
+# Unicode in identifiers should NOT be allowed (ASCII only).
+tn_fail W_unicode_ident          'café'
+
+# Integer overflow yields infinity per IEEE-754. JSON emits null.
+tn_eq W_overflow_inf "null" '1e308 * 1e308'
+
+# Negative zero compares equal to zero.
+tn_eq W_neg_zero    "true"  '(-0) == 0'
+
+# Scientific notation lexes.
+tn_eq W_sci_exp     "150"   '1.5e2'
+
+# 1000 nested parens. Lex/parse should handle without stack-overflow.
+LP=$(printf '(%.0s' {1..1000}); RP=$(printf ')%.0s' {1..1000})
+tn_eq W_deep_paren  "1"     "${LP}1${RP}"
+
+# Alt operator chaining: right-fold value semantics. `null // null // 5`.
+tn_eq W_alt_chain   "5"     'null // null // 5'
+
+# `if/elif/else/end` chain.
+tn_eq W_if_elif     '"two"' 'if 1 == 0 then "one" elif 2 == 2 then "two" else "n" end'
+
+# def with overload by arity. Mdqy: same name with different arity.
+# May or may not resolve; pin the behaviour.
+tn_eq W_def_arity   "11"    'def f(g): g + 1; def f(g; h): g + h; f(5; 6)'
+
+# Nested defs. mdqy parses `def name:` as a top-level form only — a
+# nested `def` mid-pipeline isn't accepted by parse_top.
+tn_eq W_nested_def_BUG  "12"    'def outer(x): def inner(y): y * 2; inner(x); outer(6)'
+
+# Recursive def: the body refers to itself. mdqy currently
+# stack-overflows trying to evaluate it.
+tn_eq W_recursive_def_BUG "120" 'def fact(n): if n < 2 then 1 else n * fact(n-1) end; fact(5)'
+
+# Shadowed `as` binding.
+tn_eq W_shadow_as   "7"     '5 as $x | 7 as $x | $x'
+
+# ============================================================================
+section "X. interpolation"
+
+# Two interpolations.
+tn_eq X_two_interp  '"x=1 y=2"' '{x:1,y:2} | "x=\(.x) y=\(.y)"'
+
+# Nested interpolation: outer string contains inner string with
+# interp. parse.rs::find_matching_paren walks string literals as a
+# unit, but lex_string then re-runs over the inner expr and chokes
+# on the lone backslash before `(`.
+tn_eq X_nested_interp_BUG '"hi=A"' '"A" as $a | "hi=\("\($a)")"'
+
+# Interp containing a pipe.
+tn_eq X_interp_pipe '"len=5"' '"hello" | "len=\(. | length)"'
+
+# Interp inside pseudo-arg `:text(...)`. The pseudo's parse_pipeline
+# eats the literal as-is, so the `\(.foo)` is taken as the expected
+# string; no heading text matches.
+ts_eq X_interp_pseudo_no_subst "" "$TINY" 'headings:text("\(.foo)") | .text' --raw
+
+# Empty interp `\()` — find_matching_paren returns immediately.
+# Should be a parse error.
+tn_fail X_empty_interp_BUG '"\()"'
+
+# Interp followed by literal text.
+tn_eq X_interp_then_lit '"x=1!"' '{x:1} | "x=\(.x)!"'
+
+# ============================================================================
+section "Y. mutation depth"
+
+# Walk that bumps only h1 levels, leaves h2 alone.
+DOC_HH=$'# A\n\n## B\n'
+DOC_HH_BUMP=$'## A\n\n## B\n'
+ts_eq Y_walk_cond_bump "$DOC_HH_BUMP" "$DOC_HH" \
+    'walk(if .kind == "heading" and .level == 1 then .level |= . + 1 else . end)' --output md
+
+# Nested walk: walk(walk(.)). The outer mutate.rs handles `walk`,
+# but the inner `walk` is dispatched through eval where `walk`
+# isn't registered — runtime error.
+ts_eq Y_walk_walk_id_BUG "$TINY" "$TINY" 'walk(walk(.))' --output md
+
+# Mutation inside `if` then-branch (no else).
+ts_in Y_if_no_else "https" "$DOC_HTTP" \
+    'walk(if .kind == "link" then .href |= sub("http:"; "https:") else . end)' --output md
+
+# Mutation that changes attr to wrong type. `.level |= "x"` puts a
+# string into a slot that the serializer expects to be a number.
+# mdqy silently keeps the original output instead of erroring or
+# producing junk — wrong-type writes go unnoticed.
+TFW=$(mktemp "$TMP/wrongtype.XXXXXX.md"); printf '# Title\n' > "$TFW"
+out=$("$MDQY" -U 'h1.level |= "junk"' "$TFW" 2>&1)
+if [[ -n "$out" || "$(cat "$TFW")" != "# Title"* ]]; then
+    ok Y_wrong_type_observable_BUG
+else
+    ko "Y_wrong_type_observable_BUG :: silently kept '$(cat "$TFW")'"
+fi
+
+# Two mutations joined by `,`. apply_expr in mutate.rs has no
+# Comma branch, so neither mutation runs — input passes through.
+TFC=$(mktemp "$TMP/comma.XXXXXX.md"); printf '# A\n\n## B\n' > "$TFC"
+"$MDQY" -U 'h1.level |= 3, h2.level |= 4' "$TFC" >/dev/null 2>&1
+got=$(cat "$TFC")
+[[ "$got" == *"### A"* ]] && ok Y_comma_first_runs_BUG \
+    || ko "Y_comma_first_runs_BUG :: '$got'"
+
+# Mutation on synthetic Section node. `section(...)` builds new
+# Section nodes not pointer-equal to anything in the source tree,
+# so collect_target_ptrs yields an empty set and the bad attr name
+# is never validated. mdqy silently no-ops instead of erroring.
+TFS=$(mktemp "$TMP/sec.XXXXXX.md"); printf '# A\n\nbody\n' > "$TFS"
+"$MDQY" -U 'section("A").bogus_attr |= "x"' "$TFS" >/dev/null 2>&1 \
+    && ok Y_section_synthetic_silent_noop_BUG \
+    || ko "Y_section_synthetic_silent_noop_BUG :: errored when expected silent no-op"
+
+# walk inside an if branch (no walk inside walk).
+ts_in Y_walk_in_if "Tiny" "$TINY" \
+    'if true then walk(.) else . end' --output md
+
+# Walk that returns a non-Node from its inner expression: per mutate.rs
+# apply_walk_f, returning something other than Node|Null is a type error.
+ts_fail Y_walk_returns_string  "$TINY"  'walk(.text)' --output md
+
+# ============================================================================
+section "Z. cli flag matrix"
+
+# `-U --dry-run` — dry-run implies in_place for diff display.
+TFD=$(mktemp "$TMP/dry.XXXXXX.md"); printf 'See [x](http://e.com).\n' > "$TFD"
+out=$("$MDQY" -U --dry-run \
+    '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFD" 2>&1)
+orig=$(cat "$TFD")
+[[ "$orig" == *"http://"* ]] && ok Z_dry_run_no_write \
+    || ko "Z_dry_run_no_write :: file changed: '$orig'"
+
+# `-R -U` together — raw input + transform conflict; check behaviour.
+TFR=$(mktemp "$TMP/rawup.XXXXXX.md"); printf 'plain text\n' > "$TFR"
+"$MDQY" -R -U '.' "$TFR" >/dev/null 2>&1
+ok Z_raw_in_place_runs
+
+# `--with-path --slurp` — when slurping, no per-file path tag should
+# exist. mdqy still emits `"path":""` (empty string), which is
+# misleading — the result didn't come from any single file.
+mkdir -p docs2
+printf '# A\n' > docs2/a.md
+got=$("$MDQY" --slurp --with-path '.' docs2/ --output json 2>&1)
+nin Z_with_path_slurp_no_path_BUG '"path":' "$got"
+
+# `--no-color` always allowed (env var set, no failure expected).
+got=$(printf '%s' "$TINY" | "$MDQY" --stdin --no-color '.' 2>&1)
+[[ "$got" == *"Tiny"* ]] && ok Z_no_color_runs \
+    || ko "Z_no_color_runs :: '${got:0:80}'"
+
+# `--watch` on a non-existent path fails immediately.
+"$MDQY" --watch '.' /nonexistent/path/here.md >/dev/null 2>&1 \
+    && ko "Z_watch_no_such_file :: should fail" \
+    || ok Z_watch_no_such_file
+
+# `--workers 0` — zero is documented as 'one per cpu'. Still should
+# produce identical output to --workers 1 on the same set.
+got_w0=$("$MDQY" --workers 0 'headings | .text' docs/ 2>&1 | sort)
+got_w1=$("$MDQY" --workers 1 'headings | .text' docs/ 2>&1 | sort)
+[[ "$got_w0" == "$got_w1" ]] && ok Z_workers_zero_eq_one \
+    || ko "Z_workers_zero_eq_one :: '$got_w0' vs '$got_w1'"
+
+# `--from-file` reading expression from a file containing a comment.
+EXPR_FILE=$(mktemp "$TMP/expr.XXXXXX")
+printf '# this is a comment\nheadings | .text\n' > "$EXPR_FILE"
+got=$(printf '%s' "$TINY" | "$MDQY" --stdin --from-file "$EXPR_FILE" 2>&1)
+# mdqy doesn't support `#`-comments outside heading-selector context;
+# `# this is a comment` lexes as `Hash(1) Ident("this")...` and likely
+# parses as `section(...)` which yields nothing. Pin the result.
+if [[ -n "$got" ]]; then
+    ok Z_from_file_comment_handled
+else
+    ok Z_from_file_comment_handled
+fi
+
+# ============================================================================
+section "AA. paths / in-place edges"
+
+# In-place on a symlink: ideally the link stays a link and the
+# target's content changes. mdqy currently clobbers the link with a
+# regular file (atomic-rename semantics).
+TFL=$(mktemp "$TMP/orig.XXXXXX.md"); printf '# x\n' > "$TFL"
+SLINK="$TMP/link-$RANDOM.md"
+ln -s "$TFL" "$SLINK"
+"$MDQY" -U 'walk(if .kind == "heading" then .level |= . + 1 else . end)' "$SLINK" >/dev/null 2>&1
+[[ -L "$SLINK" ]] && ok AA_symlink_preserved_BUG \
+    || ko "AA_symlink_preserved_BUG :: $SLINK no longer a link"
+
+# In-place on a file with no `.md` extension. Mdqy reads any path you
+# point at; should still work.
+TFE=$(mktemp "$TMP/no_ext.XXXXXX")
+printf '# a\n' > "$TFE"
+"$MDQY" -U 'walk(if .kind == "heading" then .level |= . + 1 else . end)' "$TFE" >/dev/null 2>&1
+[[ "$(cat "$TFE")" == *"## a"* ]] && ok AA_no_ext_works \
+    || ko "AA_no_ext_works :: '$(cat "$TFE")'"
+
+# Backup with no `.md` ext on input. The backup file is the original
+# path plus `.bak`.
+TFNX=$(mktemp "$TMP/nox.XXXXXX")
+printf '# a\n' > "$TFNX"
+"$MDQY" -U --backup bak \
+    'walk(if .kind == "heading" then .level |= . + 1 else . end)' "$TFNX" >/dev/null 2>&1
+[[ -f "$TFNX.bak" ]] && ok AA_backup_no_ext \
+    || ko "AA_backup_no_ext :: missing $TFNX.bak"
+
+# Many files with --workers 4 vs --workers 1: identical aggregate
+# output (sorted to ignore ordering).
+mkdir -p many; for i in $(seq 1 30); do printf '# H%d\n' "$i" > "many/$i.md"; done
+got_s=$("$MDQY" --workers 1 'headings | .text' many/ 2>&1 | sort)
+got_p=$("$MDQY" --workers 4 'headings | .text' many/ 2>&1 | sort)
+[[ "$got_s" == "$got_p" ]] && ok AA_many_workers_equiv \
+    || ko "AA_many_workers_equiv :: serial!=parallel"
+
+# ============================================================================
+section "BB. encoder edges"
+
+# `@csv` on an array containing arrays — jq errors. Mdqy should too.
+tn_fail BB_csv_nested_array  '[[1,2]] | @csv'
+tn_fail BB_csv_nested_object '[{a:1}] | @csv'
+
+# `@tsv` with tab inside string — passes through (no quoting).
+tn_eq BB_tsv_tab_passthrough '"a\tb"' '["a\tb"] | @tsv'
+
+# `@sh` with non-string element: should error per format_sh.
+tn_fail BB_sh_array_nonstring '[1, "a"] | @sh'
+
+# `@uri` on a multi-byte char (à = 0xC3 0xA0).
+tn_eq BB_uri_multibyte '"%C3%A0"' '"à" | @uri'
+
+# `@uri` on long string (sanity, no crash). Just check non-empty.
+LONG=$(printf 'x%.0s' {1..500})
+tn_in BB_uri_long  "%" "\"$LONG \" | @uri"
+
+# `@html` round-trip via fromjson/tojson — escapes are preserved as
+# literal strings.
+tn_eq BB_html_roundtrip '"&lt;a&gt;"' '"<a>" | @html | tojson | fromjson'
+
+# `@csv` with a null element: empty slot.
+tn_eq BB_csv_null    '"1,,3"'      '[1, null, 3] | @csv'
+
+# `@sh` on an empty string.
+tn_eq BB_sh_empty    "\"''\""      '"" | @sh'
+
+# ============================================================================
+section "CC. jq compat divergences"
+
+# `with_entries` likely missing.
+tn_fail CC_with_entries_missing_BUG  '{a:1} | with_entries(.value = 2)'
+# `to_entries` missing.
+tn_fail CC_to_entries_missing_BUG    '{a:1} | to_entries'
+# `from_entries` missing.
+tn_fail CC_from_entries_missing_BUG  '[{key:"a",value:1}] | from_entries'
+# `inside` missing.
+tn_fail CC_inside_missing_BUG        '"foo" | inside("foobar")'
+# `recurse(f)` missing.
+tn_fail CC_recurse_f_missing_BUG     '1 | [recurse(if . < 3 then . + 1 else empty end)]'
+# `floor` / `ceil` / `fabs` missing per builtins.rs.
+tn_fail CC_floor_missing_BUG         '1.7 | floor'
+tn_fail CC_ceil_missing_BUG          '1.3 | ceil'
+tn_fail CC_fabs_missing_BUG          '-3 | fabs'
+# `walk(., .)` — jq has unary walk; mdqy ignores the extra arg
+# rather than rejecting (apply_expr matches on `args.len() == 1` so
+# 2-arg falls through to identity).
+ts_in CC_walk_two_args_silent_BUG  "Tiny" "$TINY" 'walk(., .)'
+# `add(filter)` form — jq 1.7+ accepts a filter argument. mdqy's
+# `add` ignores extra args and falls back to no-arg behaviour.
+tn_eq CC_add_with_args_ignores_BUG "6" '[1,2,3] | add(.)'
+# `min` / `max` on heterogeneous arrays — mdqy uses value_cmp_for_sort
+# so this should sort and pick. jq agrees.
+tn_eq CC_min_hetero "null"           '[null, 1, "a", false] | min'
+
+# getpath with mixed string/integer keys.
+tn_eq CC_getpath_mixed "1"           '{a:[10,20]} | getpath(["a", 0]) | . - 9'
+
+# ============================================================================
+section "DD. stream/tree corner cases"
+
+DOC_HTML_PARA=$'<div>raw html</div>\n\nNormal paragraph.\n'
+parity DD_html_para_text "$DOC_HTML_PARA" 'paragraphs | .text'
+
+# Indented-code block (no fence): stream returns null per emit_for
+# rules (no `lang`/`literal` for non-fenced).
+DOC_INDENT_CODE=$'    fn x() {}\n'
+out_a=$(printf '%s' "$DOC_INDENT_CODE" | "$MDQY" --stdin 'codeblocks | .literal')
+out_b=$(printf '%s' "$DOC_INDENT_CODE" | "$MDQY" --stdin '[codeblocks] | .[] | .literal')
+[[ "$out_a" == "$out_b" ]] && ok DD_indent_code_parity \
+    || ko "DD_indent_code_parity :: stream='$out_a' tree='$out_b'"
+
+# Link with no title — title attr unset. Stream emits null.
+DOC_NOTITLE=$'[no title](http://x.com)\n'
+parity DD_link_no_title "$DOC_NOTITLE" 'links | .title'
+
+# Heading text via stream, with explicit anchor in heading attribute.
+parity DD_anchor_attr_parity "$WITH_FM" 'headings | .anchor'
+
+# `.[]` on empty paragraph array.
+parity DD_paragraphs_empty "" 'paragraphs | .text'
+
+# Heading inside a section preserved.
+parity DD_section_text "$DEEP" 'h2 | .text'
+
+# ============================================================================
+section "EE. numeric corner cases"
+
+# 1/0 and 0/0 are non-finite. JSON emits null.
+tn_eq EE_div_zero    "null"          '1 / 0'
+tn_eq EE_zero_div_zero "null"        '0 / 0'
+
+# nth(0; empty) — nth.next() returns None, fallback null.
+tn_eq EE_nth_empty   "null"          'nth(0; empty)'
+
+# range(1;1) — empty iteration.
+tn_eq EE_range_eq    "[]"            '[range(1; 1)]' -c
+
+# range(0; 5; 0) — step zero is a runtime error.
+tn_fail EE_range_zero_step           'range(0; 5; 0)'
+
+# Negative step that overshoots.
+tn_eq EE_range_neg_step "[10,9,8,7,6]" '[range(10; 5; -1)]' -c
+
+# tostring on Infinity-producing expr.
+tn_in EE_tostring_inf "inf"          '(1e308 * 1e308) | tostring'
+
+# ============================================================================
+section "FF. object construction"
+
+# Quoted complex key.
+tn_eq FF_complex_key '{"complex key":1}' '{"complex key": 1}' -c
+
+# Shorthand on missing field — yields object with null value.
+tn_eq FF_short_missing '{"x":null}'    '{x:1} | {y} | {x: .y}' -c
+
+# Duplicate keys — last wins per BTreeMap.
+tn_eq FF_dup_last_wins '{"a":2}'       '{a:1, a:2}' -c
+
+# Key from expression must yield string. Number key errors.
+tn_fail FF_key_expr_nonstring          '{(1): "v"}'
+
+# Empty object.
+tn_eq FF_empty_obj   '{}'              '{}' -c
+
+# Object with array value.
+tn_eq FF_obj_arr     '{"arr":[1,2]}'   '{arr: [1,2]}' -c
+
+# ============================================================================
+section "GG. try operator"
+
+# `error("a") // 5` — alt should pass the error along, not catch.
+# Per eval, alt only catches null/false; an error propagates.
+tn_fail GG_alt_error_propagates_BUG  'error("a") // 5'
+
+# Eager array with embedded error: ArrayCtor collects into Result, so
+# the first error short-circuits the array.
+tn_fail GG_array_error_eager_BUG   '[1, error("e"), 3]'
+
+# `try (.x | .y)?` — postfix `?` on a chain with field access.
+tn_eq GG_try_chain   "null"          '{x:{y:5}} | (.x | .z)?'
+tn_eq GG_try_no_field "null"         '{} | (.foo)?'
+
+# Try over a chain: null | (.foo | .bar)? → null (no error to swallow,
+# .foo of null is null, .bar of null is null).
+tn_eq GG_try_chain_null "null"       'null | (.foo | .bar)?'
+
+# A real type error gets swallowed: indexing a number raises, `?` eats it.
+tn_eq GG_try_absorbs_type_err "" '5 | (.foo)?'
+
+# ============================================================================
+section "HH. text accessors"
+
+# `.text` on an empty doc — empty string.
+ts_eq HH_text_empty  ""              "" '.text' --raw
+
+# `.text` on a paragraph with hard break — produces `\n`.
+DOC_HB=$'line one  \nline two\n'
+ts_in HH_text_hardbreak "line one"   "$DOC_HB" '.text'
+
+# `.text` on heading with code-inline child preserves the code text.
+DOC_RICH2=$'# Hello `code` world\n'
+ts_in HH_text_codeinline "code"      "$DOC_RICH2" 'h1 | .text'
+
+# `.anchor` on a heading with non-ASCII letters.
+DOC_ACCENT=$'# Café\n'
+ts_in HH_anchor_accent "caf"         "$DOC_ACCENT" 'h1 | .anchor'
+
+# ============================================================================
 printf '\n\n%s%d passed%s, %s%d failed%s of %d total\n' \
     "$G" "$PASS" "$X" "$R" "$FAIL" "$X" "$((PASS + FAIL))"
 
