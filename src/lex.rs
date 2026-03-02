@@ -273,8 +273,30 @@ fn lex_string(source: &str, start: usize) -> Result<(Cow<'_, str>, usize), Compi
     let mut i = start + 1;
     let mut owned: Option<String> = None;
     let mut raw_start = i;
+    // Paren depth inside a `\(...)` interpolation region. While > 0,
+    // a `"` does not terminate the outer string — it opens a nested
+    // sub-string that we scan past as an opaque blob.
+    let mut depth = 0usize;
 
     while i < bytes.len() {
+        if depth > 0 {
+            match bytes[i] {
+                b'(' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    i += 1;
+                }
+                b'"' => {
+                    let (_inner, end) = lex_string(source, i)?;
+                    i = end;
+                }
+                _ => i += 1,
+            }
+            continue;
+        }
         match bytes[i] {
             b'"' => {
                 let tail = &source[raw_start..i];
@@ -288,7 +310,6 @@ fn lex_string(source: &str, start: usize) -> Result<(Cow<'_, str>, usize), Compi
                 return Ok((value, i + 1));
             }
             b'\\' => {
-                // Escape sequence. Flush any prior raw slice.
                 let mut buf = owned.take().unwrap_or_default();
                 buf.push_str(&source[raw_start..i]);
                 i += 1;
@@ -301,9 +322,14 @@ fn lex_string(source: &str, start: usize) -> Result<(Cow<'_, str>, usize), Compi
                     b't' => buf.push('\t'),
                     b'r' => buf.push('\r'),
                     b'0' => buf.push('\0'),
-                    // `\(expr)` interpolation passes through raw; the
-                    // parser doesn't interpolate yet.
-                    b'(' => buf.push_str("\\("),
+                    // `\(expr)` opens an interpolation region. Pass
+                    // it through raw so the parser can re-tokenise the
+                    // body, and bump the depth so a `"` inside the
+                    // body doesn't terminate the outer string.
+                    b'(' => {
+                        buf.push_str("\\(");
+                        depth = 1;
+                    }
                     other => {
                         return Err(CompileError::Lex {
                             offset: i - 1,
