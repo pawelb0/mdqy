@@ -101,7 +101,9 @@ impl<'t, 's> Parser<'t, 's> {
         self.advance();
         let params = self.parse_def_params()?;
         self.expect(Tok::Colon, "`:`")?;
-        let body = self.parse_pipeline()?;
+        // Body uses parse_top so a nested `def` parses; falling through
+        // to parse_pipeline would reject KwDef as an unknown token.
+        let body = self.parse_top()?;
         self.expect(Tok::Semicolon, "`;`")?;
         let rest = self.parse_top()?;
         Ok(Expr::Def { name: Arc::from(name), params, body: Box::new(body), rest: Box::new(rest) })
