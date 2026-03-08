@@ -22,7 +22,7 @@ use crate::value::Value;
 pub struct Env {
     bindings: BTreeMap<String, Value>,
     funcs: BTreeMap<String, Arc<UserFn>>,
-    filters: BTreeMap<String, Arc<Expr>>,
+    filters: BTreeMap<String, Arc<FilterClosure>>,
 }
 
 /// A `def name(params): body;` ready to be re-instantiated per call.
@@ -30,6 +30,16 @@ pub struct Env {
 pub(crate) struct UserFn {
     pub params: Vec<Arc<str>>,
     pub body: Expr,
+}
+
+/// Filter-typed argument bound at a call site. The expression has to
+/// evaluate against the *caller's* environment, otherwise a recursive
+/// `def f(n): ... f(n-1)` rebinds `n` to itself and the lookup loops
+/// forever.
+#[derive(Debug)]
+pub(crate) struct FilterClosure {
+    pub expr: Arc<Expr>,
+    pub env: Env,
 }
 
 impl Env {
@@ -44,7 +54,7 @@ impl Env {
     }
 
     /// Look up a filter-typed parameter (a `def`'s argument).
-    pub(crate) fn lookup_filter(&self, name: &str) -> Option<Arc<Expr>> {
+    pub(crate) fn lookup_filter(&self, name: &str) -> Option<Arc<FilterClosure>> {
         self.filters.get(name).cloned()
     }
 
@@ -62,9 +72,10 @@ impl Env {
         self
     }
 
-    /// Bind a filter-typed parameter.
-    pub(crate) fn with_filter(mut self, name: &str, expr: Arc<Expr>) -> Self {
-        self.filters.insert(name.to_string(), expr);
+    /// Bind a filter-typed parameter, capturing the env it should
+    /// evaluate against.
+    pub(crate) fn with_filter(mut self, name: &str, closure: Arc<FilterClosure>) -> Self {
+        self.filters.insert(name.to_string(), closure);
         self
     }
 }
@@ -484,7 +495,7 @@ impl Iterator for RecurseAll {
 fn dispatch_call(name: &Arc<str>, args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.is_empty() {
         if let Some(filter) = env.lookup_filter(name) {
-            return eval(&filter, input, env);
+            return eval(&filter.expr, input, &filter.env);
         }
     }
     if let Some(f) = env.lookup_func(name) {
@@ -495,9 +506,16 @@ fn dispatch_call(name: &Arc<str>, args: &[Expr], input: Value, env: &Env) -> Str
                 args.len()
             ))));
         }
+        // Capture caller's env so each filter argument evaluates in
+        // the scope it was passed from, not the callee's scope.
+        let caller_env = env.clone();
         let mut new_env = env.clone();
         for (p, a) in f.params.iter().zip(args.iter()) {
-            new_env = new_env.with_filter(p.as_ref(), Arc::new(a.clone()));
+            let closure = Arc::new(FilterClosure {
+                expr: Arc::new(a.clone()),
+                env: caller_env.clone(),
+            });
+            new_env = new_env.with_filter(p.as_ref(), closure);
         }
         return eval(&f.body, input, &new_env);
     }
