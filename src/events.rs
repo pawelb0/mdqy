@@ -395,12 +395,15 @@ fn heading_level_i64(node: &Node) -> i64 {
 /// and attach it to `root.attrs[FRONTMATTER]`. Parse failure leaves
 /// the attr unset; the rest of the pipeline treats that as `null`.
 fn attach_frontmatter(root: &mut Node, source: &str) {
-    let Some(metadata) = root.children.iter().find_map(|child| match child {
-        Value::Node(n) if n.kind == NodeKind::Html => Some(n.clone()),
-        _ => None,
-    }) else {
+    // Frontmatter only counts when it's the first block; pulldown-cmark
+    // emits MetadataBlock anywhere `---\n...---` appears once the
+    // feature is enabled.
+    let Some(Value::Node(metadata)) = root.children.first().cloned() else {
         return;
     };
+    if metadata.kind != NodeKind::Html {
+        return;
+    }
     let Some(Value::String(flavour)) = metadata.attrs.get(attr::LANG) else {
         return;
     };
