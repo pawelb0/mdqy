@@ -290,7 +290,7 @@ fn emit_stream<W: io::Write>(
             None => anyhow::anyhow!("runtime error: {e}"),
         })?;
         let tagged;
-        let out_value = if args.with_path && matches!(format, OutputFormat::Json) {
+        let out_value = if args.with_path && path.is_some() && matches!(format, OutputFormat::Json) {
             tagged = tag_with_path(&value, path);
             &tagged
         } else {
