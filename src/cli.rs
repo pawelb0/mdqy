@@ -506,21 +506,25 @@ fn resolve_format(requested: OutputFormat) -> OutputFormat {
 }
 
 fn apply_in_place(path: &Path, new_bytes: &[u8], backup: Option<&str>) -> anyhow::Result<()> {
+    // Resolve symlinks so `tempfile::persist`'s rename writes the
+    // target file instead of clobbering the symlink with a regular
+    // file.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Some(ext) = backup {
-        let backup_path = match path.extension() {
+        let backup_path = match target.extension() {
             Some(orig) => {
-                let mut bp = path.to_path_buf();
+                let mut bp = target.clone();
                 bp.set_extension(format!("{}.{ext}", orig.to_string_lossy()));
                 bp
             }
-            None => path.with_extension(ext),
+            None => target.with_extension(ext),
         };
-        fs::copy(path, &backup_path)?;
+        fs::copy(&target, &backup_path)?;
     }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = NamedTempFile::new_in(parent)?;
     tmp.write_all(new_bytes)?;
     tmp.as_file().sync_all()?;
-    tmp.persist(path)?;
+    tmp.persist(&target)?;
     Ok(())
 }
