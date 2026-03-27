@@ -36,7 +36,7 @@ pub fn transform_bytes(expr: &Expr, source: &[u8]) -> Result<Vec<u8>, RunError> 
 fn apply_expr(expr: &Expr, root: Arc<Node>) -> Result<Arc<Node>, RunError> {
     match expr {
         Expr::Identity => Ok(root),
-        Expr::Pipe(a, b) => {
+        Expr::Pipe(a, b) | Expr::Comma(a, b) => {
             let r1 = apply_expr(a, root)?;
             apply_expr(b, r1)
         }
