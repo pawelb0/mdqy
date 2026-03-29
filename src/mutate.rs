@@ -123,6 +123,9 @@ fn apply_walk_f(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
         Expr::Call { name, args } if name.as_ref() == "del" && args.len() == 1 => {
             walk_self_attr(node, &args[0], Op::Delete)
         }
+        Expr::Call { name, args } if name.as_ref() == "walk" && args.len() == 1 => {
+            walk_tree(&args[0], node)
+        }
         _ => {
             // Read-only path: eval against the node and demand a
             // Node in return. `.` and chained field access land here.
