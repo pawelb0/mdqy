@@ -252,6 +252,15 @@ fn walk_and_update(
                     .next()
                     .transpose()?
                     .unwrap_or(Value::Null);
+                let expected = attr::expected_type(key);
+                let got = replacement.type_name();
+                let compatible = expected == "any" || got == "null" || got == expected;
+                if !compatible {
+                    return Err(RunError::Type {
+                        expected: format!("{expected} for `.{attr_name}`"),
+                        got: got.into(),
+                    });
+                }
                 new_node.attrs.insert(key, replacement);
             }
         }

@@ -171,4 +171,18 @@ pub mod attr {
             _ => return None,
         })
     }
+
+    /// Schema for a canonical attr. The mutation path uses this to
+    /// reject writes that would render unobservably (for example, a
+    /// string into `level`, which the heading emitter ignores).
+    #[must_use]
+    pub fn expected_type(key: &'static str) -> &'static str {
+        match key {
+            LEVEL | START => "number",
+            ORDERED | TIGHT | CHECKED => "boolean",
+            ALIGNS => "array",
+            FRONTMATTER => "any",
+            _ => "string",
+        }
+    }
 }
