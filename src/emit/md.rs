@@ -85,7 +85,7 @@ fn collect_dirty_segments(node: &Node, out: &mut Vec<(Span, Vec<u8>)>) -> Result
 
 fn write_line<W: io::Write>(writer: &mut W, bytes: &[u8]) -> Result<(), RunError> {
     writer.write_all(bytes)?;
-    if !bytes.ends_with(b"\n") {
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         writer.write_all(b"\n")?;
     }
     Ok(())
