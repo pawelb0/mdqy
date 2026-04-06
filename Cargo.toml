@@ -52,6 +52,7 @@ predicates = "3"
 tempfile = "3"
 clap_complete = "4"
 clap_mangen = "0.2"
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "criterion"
