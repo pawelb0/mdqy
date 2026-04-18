@@ -1164,6 +1164,94 @@ DOC_ACCENT=$'# Café\n'
 ts_in HH_anchor_accent "caf"         "$DOC_ACCENT" 'h1 | .anchor'
 
 # ============================================================================
+section "II. wider stream/tree parity"
+
+# For each stream-eligible expression: run via the binary (auto-stream)
+# and against `[expr] | .[]` (tree-forced). Outputs must match exactly.
+parity2() {
+    local name="$1" doc="$2" expr="$3"
+    local out_a out_b
+    out_a=$({ printf '%s' "$doc" | "$MDQY" --stdin "$expr" 2>&1; printf x; })
+    out_b=$({ printf '%s' "$doc" | "$MDQY" --stdin "[$expr] | .[]" 2>&1; printf x; })
+    if [[ "${out_a%x}" == "${out_b%x}" ]]; then ok "$name"
+    else ko "$name :: stream='${out_a%x}' tree='${out_b%x}'"
+    fi
+}
+
+PARITY_DOC=$'# Top\n\nintro.\n\n## Sub A\n\n```rust\nfn a() {}\n```\n\n## Sub B\n\n```python\ndef b():\n    pass\n```\n\nSee [docs](http://x).\n\n![alt one](a.png "ta")\n\n# Other\n\n### Deep\n\nbody.\n'
+
+parity2 II_h_text       "$PARITY_DOC" 'headings | .text'
+parity2 II_h_anchor     "$PARITY_DOC" 'headings | .anchor'
+parity2 II_h_level      "$PARITY_DOC" 'headings | .level'
+parity2 II_h_kind       "$PARITY_DOC" 'headings | .kind'
+parity2 II_h_lvl_eq_1   "$PARITY_DOC" 'headings | select(.level == 1) | .text'
+parity2 II_h_lvl_eq_2   "$PARITY_DOC" 'headings | select(.level == 2) | .text'
+parity2 II_h_lvl_eq_3   "$PARITY_DOC" 'headings | select(.level == 3) | .text'
+parity2 II_h1_alias     "$PARITY_DOC" 'h1 | .text'
+parity2 II_h2_alias     "$PARITY_DOC" 'h2 | .text'
+parity2 II_code_lang    "$PARITY_DOC" 'codeblocks | .lang'
+parity2 II_code_lit     "$PARITY_DOC" 'codeblocks | .literal'
+parity2 II_code_text    "$PARITY_DOC" 'codeblocks | .text'
+parity2 II_links_href   "$PARITY_DOC" 'links | .href'
+parity2 II_links_title  "$PARITY_DOC" 'links | .title'
+parity2 II_images_href  "$PARITY_DOC" 'images | .href'
+parity2 II_images_alt   "$PARITY_DOC" 'images | .alt'
+parity2 II_images_title "$PARITY_DOC" 'images | .title'
+parity2 II_paragraphs   "$PARITY_DOC" 'paragraphs | .text'
+
+EMPTY_OF_KIND=$'just a paragraph.\n'
+parity2 II_no_h_text    "$EMPTY_OF_KIND" 'headings | .text'
+parity2 II_no_code_lang "$EMPTY_OF_KIND" 'codeblocks | .lang'
+parity2 II_no_links     "$EMPTY_OF_KIND" 'links | .href'
+
+# ============================================================================
+section "JJ. compile-error format"
+
+# Errors must carry: a caret marker, a line-numbered source excerpt,
+# and a category label. Pin the public surface so we don't regress.
+err_has() {
+    local name="$1" want="$2" expr="$3"
+    local got
+    got=$({ "$MDQY" --compile-only "$expr" 2>&1; printf x; })
+    [[ "${got%x}" == *"$want"* ]] && ok "$name" || ko "$name :: want='$want' got='${got%x}'"
+}
+
+err_has JJ_caret      '^'              '. |'
+err_has JJ_label      'expected'       '. |'
+err_has JJ_parse_tag  'parse error'    '(. '
+err_has JJ_lex_tag    'lex error'      '"oops'
+err_has JJ_pseudo_tag 'pseudo'         'headings:bogus'
+
+# Runtime errors print on the runtime path.
+runtime_has() {
+    local name="$1" want="$2" expr="$3"
+    local got
+    got=$({ "$MDQY" -n "$expr" 2>&1; printf x; })
+    [[ "${got%x}" == *"$want"* ]] && ok "$name" || ko "$name :: want='$want' got='${got%x}'"
+}
+
+runtime_has JJ_rt_type    'type error' '5 | length'
+runtime_has JJ_rt_unknown 'unknown'    'thiss_does_not_exist'
+runtime_has JJ_rt_regex   'regex'      '"x" | test("[unclosed")'
+
+# ============================================================================
+section "KK. real-corpus identity"
+
+# Every Markdown file in the repo identity-roundtrips byte-exact. If
+# any drifts, our serializer regenerated something it shouldn't have.
+ROOT_REPO=$(cd "$ROOT" && pwd)
+while IFS= read -r md; do
+    [[ -z "$md" ]] && continue
+    rel=${md#$ROOT_REPO/}
+    name=KK_$(printf '%s' "$rel" | tr -c 'A-Za-z0-9' '_')
+    got=$({ "$MDQY" '.' "$md" 2>&1; printf x; })
+    src=$({ cat "$md"; printf x; })
+    if [[ "${got%x}" == "${src%x}" ]]; then ok "$name"
+    else ko "$name :: $rel"
+    fi
+done < <(find "$ROOT_REPO" -name '*.md' -not -path '*/target/*' -not -path '*/.git/*' | sort)
+
+# ============================================================================
 printf '\n\n%s%d passed%s, %s%d failed%s of %d total\n' \
     "$G" "$PASS" "$X" "$R" "$FAIL" "$X" "$((PASS + FAIL))"
 
