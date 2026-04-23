@@ -273,9 +273,8 @@ fn lex_string(source: &str, start: usize) -> Result<(Cow<'_, str>, usize), Compi
     let mut i = start + 1;
     let mut owned: Option<String> = None;
     let mut raw_start = i;
-    // Paren depth inside a `\(...)` interpolation region. While > 0,
-    // a `"` does not terminate the outer string — it opens a nested
-    // sub-string that we scan past as an opaque blob.
+    // Paren depth inside `\(...)`. Nonzero means `"` opens a nested
+    // string instead of terminating this one.
     let mut depth = 0usize;
 
     while i < bytes.len() {
@@ -322,10 +321,7 @@ fn lex_string(source: &str, start: usize) -> Result<(Cow<'_, str>, usize), Compi
                     b't' => buf.push('\t'),
                     b'r' => buf.push('\r'),
                     b'0' => buf.push('\0'),
-                    // `\(expr)` opens an interpolation region. Pass
-                    // it through raw so the parser can re-tokenise the
-                    // body, and bump the depth so a `"` inside the
-                    // body doesn't terminate the outer string.
+                    // `\(expr)` stays raw for the parser to re-tokenise.
                     b'(' => {
                         buf.push_str("\\(");
                         depth = 1;

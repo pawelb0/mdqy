@@ -395,9 +395,8 @@ fn heading_level_i64(node: &Node) -> i64 {
 /// and attach it to `root.attrs[FRONTMATTER]`. Parse failure leaves
 /// the attr unset; the rest of the pipeline treats that as `null`.
 fn attach_frontmatter(root: &mut Node, source: &str) {
-    // Frontmatter only counts when it's the first block; pulldown-cmark
-    // emits MetadataBlock anywhere `---\n...---` appears once the
-    // feature is enabled.
+    // pulldown-cmark emits MetadataBlock anywhere `---...---` appears;
+    // we only honour it as frontmatter when it's the first block.
     let Some(Value::Node(metadata)) = root.children.first().cloned() else {
         return;
     };
@@ -408,9 +407,6 @@ fn attach_frontmatter(root: &mut Node, source: &str) {
         return;
     };
     let Some(span) = metadata.span else { return };
-    // Slice the raw metadata body between the opening and closing
-    // fences. We strip the first and last newline-terminated lines,
-    // which hold the delimiter pair.
     let body = &source[span.start..span.end.min(source.len())];
     let inner = strip_fences(body);
     let parsed = match flavour.as_ref() {

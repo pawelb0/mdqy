@@ -7,9 +7,8 @@
 //!   <mut1> | <mut2> | <mut3>
 //! ```
 //!
-//! The serializer in `emit::md` byte-copies clean subtrees and
-//! regenerates only the dirty ones, so each mutation touches just
-//! its own span in the output.
+//! `emit::md` byte-copies clean subtrees and regenerates dirty ones.
+//! Each mutation only rewrites its own span.
 
 use std::collections::HashSet;
 use std::sync::Arc;

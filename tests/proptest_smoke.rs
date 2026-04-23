@@ -1,18 +1,11 @@
-//! Property tests for the public library surface. None of these
-//! pin specific behaviour — they assert invariants that should hold
-//! across every input the strategies generate.
-//!
-//! What they catch:
-//!   * panics in the lexer or parser on hostile/garbage input
-//!   * non-byte-exact round-trips for clean synthetic markdown
-//!   * runtime panics in the tree evaluator on simple expressions
+//! Property tests over the public library surface. Invariants only;
+//! no specific behaviour is pinned here.
 
 use mdqy::{parse, Query};
 use proptest::prelude::*;
 
-/// Build a `String` of pseudo-random bytes from the alphabet most
-/// likely to confuse the lexer: punctuation it tokenises, escapes,
-/// and a handful of letters / digits to keep idents possible.
+/// Random bytes from the alphabet that's most likely to confuse the
+/// lexer: punctuation, escapes, and a few letters and digits.
 fn lex_garbage_strategy() -> impl Strategy<Value = String> {
     proptest::collection::vec(
         prop_oneof![
@@ -28,9 +21,8 @@ fn lex_garbage_strategy() -> impl Strategy<Value = String> {
     .prop_map(|chars| chars.into_iter().collect::<String>())
 }
 
-/// Synthetic expressions over the documented vocabulary. Composed by
-/// concatenating snippets, so the final string is rarely valid — that's
-/// fine; the property only asserts no-panic.
+/// Concatenation of expression snippets. Mostly invalid grammar; the
+/// property is no-panic.
 fn expr_strategy() -> impl Strategy<Value = String> {
     let snippets: &[&str] = &[
         ".", "..", "h1", "h2", "h6", "headings", "codeblocks", "links",
@@ -46,9 +38,8 @@ fn expr_strategy() -> impl Strategy<Value = String> {
         .prop_map(|parts| parts.join(" "))
 }
 
-/// Markdown built from blocks that have stable round-trip behaviour
-/// (heading, paragraph, fenced code, hr). Avoids tables / lists where
-/// pulldown-cmark + cmark-to-cmark have known formatting drift.
+/// Markdown built from heading / paragraph / fenced-code / hr blocks.
+/// Tables and lists are out: cmark round-trip drifts on those.
 fn clean_doc_strategy() -> impl Strategy<Value = String> {
     let block = prop_oneof![
         ("[a-zA-Z][a-zA-Z0-9 ]{0,30}", 1u8..=6).prop_map(|(t, l)| {
@@ -70,30 +61,22 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// Compile must never panic, even on completely random bytes.
-    /// `Query::compile` should always return `Ok` or `Err`.
     #[test]
     fn compile_never_panics_on_garbage(s in lex_garbage_strategy()) {
         let _ = Query::compile(&s);
     }
 
-    /// Compile on hand-shaped expression fragments must not panic.
     #[test]
     fn compile_never_panics_on_expr_snippets(s in expr_strategy()) {
         let _ = Query::compile(&s);
     }
 
-    /// `parse` (the markdown front-end) must not panic on arbitrary
-    /// strings.
     #[test]
     fn parse_never_panics(s in lex_garbage_strategy()) {
         let _ = parse(&s);
     }
 
-    /// Identity query is byte-exact for a clean synthetic doc. The
-    /// emitter byte-copies clean subtrees from source, so unless the
-    /// generator hits something that confuses the parser the output
-    /// must equal the input.
+    /// Identity output equals the source for a clean synthetic doc.
     #[test]
     fn identity_round_trip_byte_exact(doc in clean_doc_strategy()) {
         let q = Query::compile(".").unwrap();
@@ -102,12 +85,10 @@ proptest! {
         prop_assert_eq!(bytes, doc.as_bytes().to_vec());
     }
 
-    /// Running a stream-eligible read query against an arbitrary doc
-    /// must not panic and must agree with the tree evaluator.
+    /// Stream and tree paths produce the same headings text.
     #[test]
     fn stream_tree_agree_on_headings_text(doc in clean_doc_strategy()) {
         let q = Query::compile("headings | .text").unwrap();
-        // Stream path:
         let stream_out: Vec<String> = q
             .run(pulldown_cmark::Parser::new_ext(&doc, mdqy::markdown_options()))
             .filter_map(|r| match r.ok()? {
@@ -115,7 +96,7 @@ proptest! {
                 _ => None,
             })
             .collect();
-        // Tree path: force tree by wrapping in [...] | .[]
+        // Wrapping in `[...] | .[]` forces tree mode.
         let tree_q = Query::compile("[headings | .text] | .[]").unwrap();
         let tree_out: Vec<String> = tree_q
             .run_tree(&parse(&doc))
