@@ -67,7 +67,7 @@ where
         }
     }
 
-    fn process_event(&mut self, event: Event<'a>) {
+    fn feed(&mut self, event: Event<'a>) {
         let collecting = self.depth > 0 && self.needs_text();
         match event {
             Event::Start(tag) => self.on_start(tag),
@@ -151,7 +151,7 @@ where
                 return Some(Ok(v));
             }
             let event = self.events.next()?;
-            self.process_event(event);
+            self.feed(event);
         }
     }
 }
