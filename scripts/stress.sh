@@ -545,18 +545,11 @@ section "Q. stream/tree parity"
 # Outputs must match exactly.
 parity() {
     local name="$1" doc="$2" expr="$3"
-    local mode_a out_a out_b
-    mode_a=$("$MDQY" --explain-mode "$expr")
-    out_a=$(printf '%s' "$doc" | "$MDQY" --stdin "$expr")
-    # Force tree by appending `| .` (still stream-eligible per plan)
-    # so we instead force tree by wrapping in a comma `., .` then
-    # taking first; stream plan rejects comma.
-    out_b=$(printf '%s' "$doc" | "$MDQY" --stdin "$expr,$expr | first")
-    # The above isn't a great forcing — instead compare to `[expr] | .[]`
-    # which has [array] which kicks tree.
-    out_b=$(printf '%s' "$doc" | "$MDQY" --stdin "[$expr] | .[]")
-    if [[ "$out_a" == "$out_b" ]]; then ok "$name"
-    else ko "$name :: stream='${out_a:0:80}' tree='${out_b:0:80}'"
+    local out_a out_b
+    out_a=$({ printf '%s' "$doc" | "$MDQY" --stdin "$expr" 2>&1; printf x; })
+    out_b=$({ printf '%s' "$doc" | "$MDQY" --stdin "[$expr] | .[]" 2>&1; printf x; })
+    if [[ "${out_a%x}" == "${out_b%x}" ]]; then ok "$name"
+    else ko "$name :: stream='${out_a%x}' tree='${out_b%x}'"
     fi
 }
 
@@ -1166,43 +1159,31 @@ ts_in HH_anchor_accent "caf"         "$DOC_ACCENT" 'h1 | .anchor'
 # ============================================================================
 section "II. wider stream/tree parity"
 
-# For each stream-eligible expression: run via the binary (auto-stream)
-# and against `[expr] | .[]` (tree-forced). Outputs must match exactly.
-parity2() {
-    local name="$1" doc="$2" expr="$3"
-    local out_a out_b
-    out_a=$({ printf '%s' "$doc" | "$MDQY" --stdin "$expr" 2>&1; printf x; })
-    out_b=$({ printf '%s' "$doc" | "$MDQY" --stdin "[$expr] | .[]" 2>&1; printf x; })
-    if [[ "${out_a%x}" == "${out_b%x}" ]]; then ok "$name"
-    else ko "$name :: stream='${out_a%x}' tree='${out_b%x}'"
-    fi
-}
-
 PARITY_DOC=$'# Top\n\nintro.\n\n## Sub A\n\n```rust\nfn a() {}\n```\n\n## Sub B\n\n```python\ndef b():\n    pass\n```\n\nSee [docs](http://x).\n\n![alt one](a.png "ta")\n\n# Other\n\n### Deep\n\nbody.\n'
 
-parity2 II_h_text       "$PARITY_DOC" 'headings | .text'
-parity2 II_h_anchor     "$PARITY_DOC" 'headings | .anchor'
-parity2 II_h_level      "$PARITY_DOC" 'headings | .level'
-parity2 II_h_kind       "$PARITY_DOC" 'headings | .kind'
-parity2 II_h_lvl_eq_1   "$PARITY_DOC" 'headings | select(.level == 1) | .text'
-parity2 II_h_lvl_eq_2   "$PARITY_DOC" 'headings | select(.level == 2) | .text'
-parity2 II_h_lvl_eq_3   "$PARITY_DOC" 'headings | select(.level == 3) | .text'
-parity2 II_h1_alias     "$PARITY_DOC" 'h1 | .text'
-parity2 II_h2_alias     "$PARITY_DOC" 'h2 | .text'
-parity2 II_code_lang    "$PARITY_DOC" 'codeblocks | .lang'
-parity2 II_code_lit     "$PARITY_DOC" 'codeblocks | .literal'
-parity2 II_code_text    "$PARITY_DOC" 'codeblocks | .text'
-parity2 II_links_href   "$PARITY_DOC" 'links | .href'
-parity2 II_links_title  "$PARITY_DOC" 'links | .title'
-parity2 II_images_href  "$PARITY_DOC" 'images | .href'
-parity2 II_images_alt   "$PARITY_DOC" 'images | .alt'
-parity2 II_images_title "$PARITY_DOC" 'images | .title'
-parity2 II_paragraphs   "$PARITY_DOC" 'paragraphs | .text'
+parity II_h_text       "$PARITY_DOC" 'headings | .text'
+parity II_h_anchor     "$PARITY_DOC" 'headings | .anchor'
+parity II_h_level      "$PARITY_DOC" 'headings | .level'
+parity II_h_kind       "$PARITY_DOC" 'headings | .kind'
+parity II_h_lvl_eq_1   "$PARITY_DOC" 'headings | select(.level == 1) | .text'
+parity II_h_lvl_eq_2   "$PARITY_DOC" 'headings | select(.level == 2) | .text'
+parity II_h_lvl_eq_3   "$PARITY_DOC" 'headings | select(.level == 3) | .text'
+parity II_h1_alias     "$PARITY_DOC" 'h1 | .text'
+parity II_h2_alias     "$PARITY_DOC" 'h2 | .text'
+parity II_code_lang    "$PARITY_DOC" 'codeblocks | .lang'
+parity II_code_lit     "$PARITY_DOC" 'codeblocks | .literal'
+parity II_code_text    "$PARITY_DOC" 'codeblocks | .text'
+parity II_links_href   "$PARITY_DOC" 'links | .href'
+parity II_links_title  "$PARITY_DOC" 'links | .title'
+parity II_images_href  "$PARITY_DOC" 'images | .href'
+parity II_images_alt   "$PARITY_DOC" 'images | .alt'
+parity II_images_title "$PARITY_DOC" 'images | .title'
+parity II_paragraphs   "$PARITY_DOC" 'paragraphs | .text'
 
 EMPTY_OF_KIND=$'just a paragraph.\n'
-parity2 II_no_h_text    "$EMPTY_OF_KIND" 'headings | .text'
-parity2 II_no_code_lang "$EMPTY_OF_KIND" 'codeblocks | .lang'
-parity2 II_no_links     "$EMPTY_OF_KIND" 'links | .href'
+parity II_no_h_text    "$EMPTY_OF_KIND" 'headings | .text'
+parity II_no_code_lang "$EMPTY_OF_KIND" 'codeblocks | .lang'
+parity II_no_links     "$EMPTY_OF_KIND" 'links | .href'
 
 # ============================================================================
 section "JJ. compile-error format"
