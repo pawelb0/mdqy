@@ -41,6 +41,7 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
             headings_at(input, i64::from(name.as_bytes()[1] - b'0'))
         }
         "section" => return Some(section(args, input, env)),
+        "sections" => return Some(sections(args, input, env)),
         "text" => one(text_of(&input)),
         "anchor" => one(anchor_of(&input)),
         "type" => ok(Value::from(input.type_name())),
@@ -226,6 +227,64 @@ fn build_sections(node: &Node, name: &str, out: &mut Vec<Value>) {
             j += 1;
         }
         out.push(Value::Node(Arc::new(section)));
+        i = j;
+    }
+}
+
+/// `sections` (no args) wraps every heading + its body into a Section
+/// node and streams them in document order. `sections(N)` filters by
+/// heading level. Body extends until the next heading at level <= the
+/// section heading's.
+fn sections(args: &[Expr], input: Value, env: &Env) -> Stream {
+    let level_filter = match args.len() {
+        0 => None,
+        1 => match eval_first(&args[0], &input, env) {
+            Ok(Some(Value::Number(n))) if n.fract() == 0.0 => Some(n as i64),
+            Ok(Some(Value::Number(_))) => {
+                return err(RunError::Other("sections: level must be an integer".into()));
+            }
+            Ok(Some(other)) => return err(type_err("number", &other)),
+            Ok(None) => return Box::new(std::iter::empty()),
+            Err(e) => return err(e),
+        },
+        _ => return err(RunError::Other("sections: expected 0 or 1 arguments".into())),
+    };
+    let Value::Node(root) = &input else {
+        return err(type_err("node", &input));
+    };
+    let mut out = Vec::new();
+    build_all_sections(&root.children, level_filter, &mut out);
+    Box::new(out.into_iter().map(Ok))
+}
+
+fn build_all_sections(children: &[Value], level_filter: Option<i64>, out: &mut Vec<Value>) {
+    let mut i = 0;
+    while i < children.len() {
+        let Value::Node(node) = &children[i] else {
+            i += 1;
+            continue;
+        };
+        if node.kind != NodeKind::Heading {
+            build_all_sections(&node.children, level_filter, out);
+            i += 1;
+            continue;
+        }
+        let level = heading_level(node);
+        let mut j = i + 1;
+        while let Some(Value::Node(sibling)) = children.get(j) {
+            if sibling.kind == NodeKind::Heading && heading_level(sibling) <= level {
+                break;
+            }
+            j += 1;
+        }
+        if level_filter.is_none_or(|want| want == level) {
+            let mut section = Node::new(NodeKind::Section);
+            section.children = children[i..j].to_vec();
+            out.push(Value::Node(Arc::new(section)));
+        }
+        if i + 1 < j {
+            build_all_sections(&children[i + 1..j], level_filter, out);
+        }
         i = j;
     }
 }

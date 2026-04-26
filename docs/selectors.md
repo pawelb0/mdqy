@@ -52,10 +52,19 @@ mdqy '### Usage | .text'
 
 `section(name)` finds the first heading whose `.text` matches
 `name` case-insensitively and returns a synthetic `Section` node
-whose children are everything up to (but not including) the next
-heading of equal or shallower level. `section_re(regex)` does the
-same with a regex. `sections` streams one section per top-level
-heading.
+whose children are the heading and everything after it up to (but
+not including) the next heading of equal or shallower level.
+
+`sections` streams one Section per heading in document order.
+Nested sub-headings produce their own sections after their
+enclosing one. `sections(N)` keeps only sections whose heading is
+at level `N`:
+
+```sh
+mdqy 'sections | .text'                  # full text of every section
+mdqy 'sections(3) | .text'               # full text of every H3 section
+mdqy 'sections | select(.children[0].level == 3)'   # same, jq-style
+```
 
 ## The `>` combinator
 

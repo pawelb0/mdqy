@@ -348,6 +348,86 @@ fn hash_selector_matches_section() {
     assert_eq!(out, ["section"]);
 }
 
+/// `sections` (no args) yields one Section per heading, body included.
+#[test]
+fn sections_yields_one_per_heading() {
+    let kinds: Vec<_> = compile("sections | .kind")
+        .run_tree(&parse(SRC))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(kinds, ["section", "section"]);
+
+    let titles: Vec<_> = compile("sections | .children[0].text")
+        .run_tree(&parse(SRC))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(titles, ["Tiny", "Second heading"]);
+}
+
+/// `sections(N)` filters by heading level.
+#[test]
+fn sections_filters_by_level() {
+    let h2: Vec<_> = compile("sections(2) | .children[0].text")
+        .run_tree(&parse(SRC))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(h2, ["Second heading"]);
+
+    let h3: Vec<_> = compile("[sections(3)] | length")
+        .run_tree(&parse(SRC))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(h3, ["0"]);
+}
+
+/// `.text` on a Section flattens heading and body together.
+#[test]
+fn sections_text_includes_body() {
+    let src = "## Alpha\n\nbody one.\n\n## Beta\n\nbody two.\n";
+    let out: Vec<_> = compile("sections(2) | .text")
+        .run_tree(&parse(src))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(out, ["Alphabody one.", "Betabody two."]);
+}
+
+/// Each nested heading produces its own Section. Sub-sections
+/// appear after their enclosing section, in document order.
+#[test]
+fn sections_recurse_into_nested_headings() {
+    let src = "# A\n\nintro\n\n## B\n\nb body\n\n### C\n\nc body\n\n## D\n\nd body\n";
+    let titles: Vec<_> = compile("sections | .children[0].text")
+        .run_tree(&parse(src))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(titles, ["A", "B", "C", "D"]);
+
+    let h3: Vec<_> = compile("sections(3) | .text")
+        .run_tree(&parse(src))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(h3, ["Cc body"]);
+}
+
+/// jq-style level filter on the Section heading reads naturally.
+#[test]
+fn sections_level_filter_via_select() {
+    let src = "# A\n\n## B\n\n## C\n";
+    let out: Vec<_> = compile("sections | select(.children[0].level == 2) | .children[0].text")
+        .run_tree(&parse(src))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect();
+    assert_eq!(out, ["B", "C"]);
+}
+
 /// Stream and tree runners agree for every stream-eligible query.
 /// If they drift, one of them has regressed.
 #[test]

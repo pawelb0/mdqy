@@ -723,7 +723,7 @@ fn looks_like_selector_start(tok: &Tok<'_>) -> bool {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
                 | "headings" | "paragraphs" | "codeblocks" | "code"
                 | "links" | "images" | "items" | "lists" | "tables"
-                | "blockquotes" | "footnotes"
+                | "blockquotes" | "footnotes" | "sections"
             )
     )
 }
