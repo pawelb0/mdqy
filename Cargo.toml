@@ -5,10 +5,18 @@ edition = "2021"
 rust-version = "1.83"
 license = "MPL-2.0"
 description = "jq for markdown: query and transform Markdown with a hybrid selector and jq DSL"
+homepage = "https://github.com/pawelb0/mdqy"
 repository = "https://github.com/pawelb0/mdqy"
+authors = ["pawelb"]
 readme = "README.md"
 keywords = ["markdown", "jq", "query", "cli", "pulldown-cmark"]
 categories = ["command-line-utilities", "text-processing"]
+
+[package.metadata.wix]
+upgrade-guid = "EC01F7DE-BD69-4878-9A58-510D77943F5A"
+path-guid = "9B0DC815-B44E-49D5-BE13-68B921934502"
+license = false
+eula = false
 
 [workspace]
 
@@ -66,6 +74,11 @@ lto = "thin"
 opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
