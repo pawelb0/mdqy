@@ -1,0 +1,57 @@
+name: scoop
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  publish-scoop:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - name: Build manifest
+        run: |
+          set -euo pipefail
+          TAG=$(echo "$PLAN" | jq -r '.announcement_tag')
+          VERSION=$(echo "$PLAN" | jq -r '.releases[0].app_version')
+          ZIP=$(echo "$PLAN" | jq -r '.releases[0].artifacts[] | select(test("x86_64-pc-windows-msvc\\.zip$"))')
+          BASE="https://github.com/pawelb0/mdqy/releases/download/${TAG}"
+          URL="${BASE}/${ZIP}"
+          HASH=$(curl -sSfL "${URL}.sha256" | awk '{print $1}')
+          mkdir -p out/bucket
+          cat > out/bucket/mdqy.json <<JSON
+          {
+              "version": "${VERSION}",
+              "homepage": "https://github.com/pawelb0/mdqy",
+              "license": "MPL-2.0",
+              "url": "${URL}",
+              "hash": "${HASH}",
+              "bin": "mdqy.exe"
+          }
+          JSON
+          cat out/bucket/mdqy.json
+
+      - name: Push to bucket
+        env:
+          BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=$(echo "$PLAN" | jq -r '.announcement_tag')
+          git clone "https://x-access-token:${BUCKET_TOKEN}@github.com/pawelb0/scoop-bucket.git" bucket
+          mkdir -p bucket/bucket
+          cp out/bucket/mdqy.json bucket/bucket/mdqy.json
+          cd bucket
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add bucket/mdqy.json
+          if git diff --cached --quiet; then
+            echo "no manifest change"
+            exit 0
+          fi
+          git commit -m "mdqy ${TAG}"
+          git push

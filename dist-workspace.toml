@@ -20,4 +20,4 @@ tap = "pawelb0/homebrew-tap"
 formula = "mdqy"
 features = ["tty"]
 pr-run-mode = "plan"
-publish-jobs = ["homebrew"]
+publish-jobs = ["homebrew", "./scoop", "./crate"]
