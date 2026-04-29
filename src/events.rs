@@ -389,7 +389,12 @@ fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
             Some(Tag::FootnoteDefinition(val(attr::VALUE))),
             Some(TagEnd::FootnoteDefinition),
         ),
-        NodeKind::Table => (Some(Tag::Table(Vec::new())), Some(TagEnd::Table)),
+        NodeKind::Table => {
+            out.push(Event::Start(Tag::Table(read_aligns(node))));
+            emit_table_children(node, out);
+            out.push(Event::End(TagEnd::Table));
+            return;
+        }
         NodeKind::Row => (Some(Tag::TableRow), Some(TagEnd::TableRow)),
         NodeKind::Cell => (Some(Tag::TableCell), Some(TagEnd::TableCell)),
     };
@@ -406,6 +411,48 @@ fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
 fn emit_children<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
     for child in &node.children {
         if let Value::Node(n) = child {
+            emit_events(n, out);
+        }
+    }
+}
+
+fn read_aligns(node: &Node) -> Vec<Alignment> {
+    match node.attrs.get(attr::ALIGNS) {
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .map(|v| match v {
+                Value::String(s) => str_to_alignment(s),
+                _ => Alignment::None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn str_to_alignment(s: &str) -> Alignment {
+    match s {
+        "left" => Alignment::Left,
+        "center" => Alignment::Center,
+        "right" => Alignment::Right,
+        _ => Alignment::None,
+    }
+}
+
+fn emit_table_children<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
+    let mut first_row = true;
+    for child in &node.children {
+        let Value::Node(n) = child else { continue };
+        if n.kind == NodeKind::Row {
+            let (start, end) = if first_row {
+                (Tag::TableHead, TagEnd::TableHead)
+            } else {
+                (Tag::TableRow, TagEnd::TableRow)
+            };
+            first_row = false;
+            out.push(Event::Start(start));
+            emit_children(n, out);
+            out.push(Event::End(end));
+        } else {
             emit_events(n, out);
         }
     }
