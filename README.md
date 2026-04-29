@@ -36,10 +36,20 @@ From crates.io:
 cargo install mdqy --features tty
 ```
 
-Direct download: see https://github.com/pawelb0/mdqy/releases/latest. macOS direct downloads need `xattr -d com.apple.quarantine ./mdqy` once before first run.
+Prebuilt binaries for every release: [github.com/pawelb0/mdqy/releases/latest](https://github.com/pawelb0/mdqy/releases/latest).
+On macOS, direct downloads need `xattr -d com.apple.quarantine ./mdqy`
+once before first run.
 
 The `tty` feature pulls mdcat in for terminal rendering. Default
 builds emit markdown or JSON.
+
+## Documentation
+
+- [quickstart](docs/quickstart.md): tutorial walkthrough. Start here.
+- [language](docs/language.md): the jq-style query language.
+- [selectors](docs/selectors.md): `hN`, `:pseudos`, `#` sugar, the `>` combinator.
+- [transforms](docs/transforms.md): `|=`, `del`, `walk`, `-U`, `--dry-run`.
+- [architecture](docs/architecture.md): pipeline, modules, the two evaluators, byte-exact round-trip.
 
 ## Usage
 
@@ -105,8 +115,7 @@ for v in q.run_tree(&parse(source)) {
 }
 ```
 
-See `docs.rs` for the full API, and [`docs/`](docs/) for how the
-pieces fit together.
+See [docs.rs/mdqy](https://docs.rs/mdqy) for the full API.
 
 ## Tooling
 
