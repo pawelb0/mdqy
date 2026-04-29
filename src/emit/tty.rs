@@ -33,9 +33,16 @@ pub fn emit<W: io::Write>(
             wrap_code: true,
         };
         let cwd = std::env::current_dir().map_err(|e| RunError::Io(e.to_string()))?;
-        let env = Environment::for_local_directory(&cwd).map_err(|e| RunError::Io(e.to_string()))?;
-        push_tty(&settings, &env, &NoopResourceHandler, writer, events.into_iter())
-            .map_err(|e| RunError::Other(format!("push_tty: {e}")))?;
+        let env =
+            Environment::for_local_directory(&cwd).map_err(|e| RunError::Io(e.to_string()))?;
+        push_tty(
+            &settings,
+            &env,
+            &NoopResourceHandler,
+            writer,
+            events.into_iter(),
+        )
+        .map_err(|e| RunError::Other(format!("push_tty: {e}")))?;
     }
     for v in scalars {
         writer.write_all(value_to_line(&v).as_bytes())?;
@@ -67,10 +74,7 @@ fn value_to_line(v: &Value) -> String {
         Value::Number(n) if n.fract() == 0.0 && n.is_finite() => format!("{}", *n as i64),
         Value::Number(n) => n.to_string(),
         _ => {
-            let json = crate::emit::json::value_to_json(
-                v,
-                crate::emit::json::JsonOptions::COMPACT,
-            );
+            let json = crate::emit::json::value_to_json(v, crate::emit::json::JsonOptions::COMPACT);
             serde_json::to_string(&json).unwrap_or_default()
         }
     }

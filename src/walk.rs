@@ -96,7 +96,13 @@ mod tests {
         fs::write(dir.path().join("c.markdown"), "# C").unwrap();
         let paths = vec![dir.path().to_path_buf()];
         let found: Vec<String> = walk_inputs(&paths, WalkOptions::default())
-            .map(|r| r.unwrap().file_name().unwrap().to_string_lossy().into_owned())
+            .map(|r| {
+                r.unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(found, ["a.md", "c.markdown"]);
     }
@@ -111,7 +117,13 @@ mod tests {
         fs::write(dir.path().join(".ignore"), "hidden.md\n").unwrap();
         let paths = vec![dir.path().to_path_buf()];
         let found: Vec<String> = walk_inputs(&paths, WalkOptions::default())
-            .map(|r| r.unwrap().file_name().unwrap().to_string_lossy().into_owned())
+            .map(|r| {
+                r.unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(found, ["a.md"]);
     }
@@ -133,7 +145,13 @@ mod tests {
         }
         let paths = vec![dir.path().to_path_buf()];
         let found: Vec<String> = walk_inputs(&paths, WalkOptions::default())
-            .map(|r| r.unwrap().file_name().unwrap().to_string_lossy().into_owned())
+            .map(|r| {
+                r.unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(found, ["a.md", "m.md", "z.md"]);
     }

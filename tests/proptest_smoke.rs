@@ -9,12 +9,40 @@ use proptest::prelude::*;
 fn lex_garbage_strategy() -> impl Strategy<Value = String> {
     proptest::collection::vec(
         prop_oneof![
-            Just('"'), Just('\\'), Just('('), Just(')'), Just('['), Just(']'),
-            Just('{'), Just('}'), Just('|'), Just(';'), Just(','), Just('.'),
-            Just(':'), Just('@'), Just('$'), Just('#'), Just('?'), Just('+'),
-            Just('-'), Just('*'), Just('/'), Just('%'), Just('<'), Just('>'),
-            Just('='), Just('!'), Just(' '), Just('\n'), Just('\t'),
-            Just('a'), Just('h'), Just('1'), Just('0'), Just('_'),
+            Just('"'),
+            Just('\\'),
+            Just('('),
+            Just(')'),
+            Just('['),
+            Just(']'),
+            Just('{'),
+            Just('}'),
+            Just('|'),
+            Just(';'),
+            Just(','),
+            Just('.'),
+            Just(':'),
+            Just('@'),
+            Just('$'),
+            Just('#'),
+            Just('?'),
+            Just('+'),
+            Just('-'),
+            Just('*'),
+            Just('/'),
+            Just('%'),
+            Just('<'),
+            Just('>'),
+            Just('='),
+            Just('!'),
+            Just(' '),
+            Just('\n'),
+            Just('\t'),
+            Just('a'),
+            Just('h'),
+            Just('1'),
+            Just('0'),
+            Just('_'),
         ],
         0..120,
     )
@@ -25,14 +53,45 @@ fn lex_garbage_strategy() -> impl Strategy<Value = String> {
 /// property is no-panic.
 fn expr_strategy() -> impl Strategy<Value = String> {
     let snippets: &[&str] = &[
-        ".", "..", "h1", "h2", "h6", "headings", "codeblocks", "links",
-        "| .text", "| .level", "| select(.level == 1)", " | first",
-        ":first", ":last", ":nth(0)", ":nth(-1)", ":lang(rust)",
-        "[range(5)]", "length", "tostring", "@json", "@csv", "@uri",
-        " | sort_by(.level)", " | unique", " | reverse",
-        "{a:1, b:2}", "{(.x):1}", "[1, 2, 3]", "1 + 2", "if true then 1 else 2 end",
-        "as $x", "$x", "(.foo)?", "5 // null", "del(.title)",
-        ".foo |= 1", "walk(.)", "walk(.level |= . + 1)",
+        ".",
+        "..",
+        "h1",
+        "h2",
+        "h6",
+        "headings",
+        "codeblocks",
+        "links",
+        "| .text",
+        "| .level",
+        "| select(.level == 1)",
+        " | first",
+        ":first",
+        ":last",
+        ":nth(0)",
+        ":nth(-1)",
+        ":lang(rust)",
+        "[range(5)]",
+        "length",
+        "tostring",
+        "@json",
+        "@csv",
+        "@uri",
+        " | sort_by(.level)",
+        " | unique",
+        " | reverse",
+        "{a:1, b:2}",
+        "{(.x):1}",
+        "[1, 2, 3]",
+        "1 + 2",
+        "if true then 1 else 2 end",
+        "as $x",
+        "$x",
+        "(.foo)?",
+        "5 // null",
+        "del(.title)",
+        ".foo |= 1",
+        "walk(.)",
+        "walk(.level |= . + 1)",
     ];
     proptest::collection::vec(proptest::sample::select(snippets), 1..6)
         .prop_map(|parts| parts.join(" "))
@@ -42,17 +101,14 @@ fn expr_strategy() -> impl Strategy<Value = String> {
 /// Tables and lists are out: cmark round-trip drifts on those.
 fn clean_doc_strategy() -> impl Strategy<Value = String> {
     let block = prop_oneof![
-        ("[a-zA-Z][a-zA-Z0-9 ]{0,30}", 1u8..=6).prop_map(|(t, l)| {
-            format!("{} {}\n", "#".repeat(l as usize), t)
-        }),
+        ("[a-zA-Z][a-zA-Z0-9 ]{0,30}", 1u8..=6)
+            .prop_map(|(t, l)| { format!("{} {}\n", "#".repeat(l as usize), t) }),
         "[a-z][a-z .]{1,40}".prop_map(|p| format!("{p}\n")),
-        ("[a-z]{2,8}", "[a-z0-9 ]{0,30}").prop_map(|(lang, body)| {
-            format!("```{lang}\n{body}\n```\n")
-        }),
+        ("[a-z]{2,8}", "[a-z0-9 ]{0,30}")
+            .prop_map(|(lang, body)| { format!("```{lang}\n{body}\n```\n") }),
         Just("---\n".to_string()),
     ];
-    proptest::collection::vec(block, 0..6)
-        .prop_map(|blocks| blocks.join("\n"))
+    proptest::collection::vec(block, 0..6).prop_map(|blocks| blocks.join("\n"))
 }
 
 proptest! {

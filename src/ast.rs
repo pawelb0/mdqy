@@ -44,7 +44,10 @@ impl NodeKind {
     /// Lowercase name used in JSON output and `.kind == "..."` tests.
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        KIND_NAMES.iter().find(|(_, k)| *k == self).map_or("unknown", |(s, _)| *s)
+        KIND_NAMES
+            .iter()
+            .find(|(_, k)| *k == self)
+            .map_or("unknown", |(s, _)| *s)
     }
 
     /// Inverse of [`Self::as_str`]. `None` for unknown names.

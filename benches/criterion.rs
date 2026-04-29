@@ -13,16 +13,16 @@ fn corpus(headings: usize) -> String {
     for i in 0..headings {
         use std::fmt::Write as _;
         let _ = writeln!(out, "## Section {i}\n");
-        let _ = writeln!(out, "Paragraph with an [inline link](http://example.com/{i}).\n");
+        let _ = writeln!(
+            out,
+            "Paragraph with an [inline link](http://example.com/{i}).\n"
+        );
         let _ = writeln!(
             out,
             "```rust\nfn section_{i}() {{ println!(\"{i}\"); }}\n```\n"
         );
         if i % 3 == 0 {
-            let _ = writeln!(
-                out,
-                "| col1 | col2 |\n|------|------|\n| a{i} | b{i} |\n"
-            );
+            let _ = writeln!(out, "| col1 | col2 |\n|------|------|\n| a{i} | b{i} |\n");
         }
     }
     out
@@ -89,5 +89,10 @@ fn bench_link_rewrite(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse, bench_stream_vs_tree, bench_link_rewrite);
+criterion_group!(
+    benches,
+    bench_parse,
+    bench_stream_vs_tree,
+    bench_link_rewrite
+);
 criterion_main!(benches);

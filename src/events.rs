@@ -16,8 +16,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use pulldown_cmark::{
-    Alignment, CodeBlockKind, CowStr, Event, LinkType, MetadataBlockKind, Options,
-    Parser, Tag, TagEnd,
+    Alignment, CodeBlockKind, CowStr, Event, LinkType, MetadataBlockKind, Options, Parser, Tag,
+    TagEnd,
 };
 
 use crate::ast::{attr, Node, NodeKind, Span};
@@ -102,7 +102,10 @@ where
     let mut stack: Vec<Node> = vec![Node::new(NodeKind::Root)];
 
     for (event, range) in events {
-        let span = Some(Span { start: range.start, end: range.end });
+        let span = Some(Span {
+            start: range.start,
+            end: range.end,
+        });
         match event {
             Event::Start(tag) => {
                 let mut node = start_node(&tag);
@@ -175,7 +178,8 @@ fn start_node(tag: &Tag<'_>) -> Node {
             Node::new(NodeKind::Code).with_attr(attr::LANG, lang.to_string())
         }
         Tag::List(start) => {
-            let mut n = Node::new(NodeKind::List).with_attr(attr::ORDERED, Value::Bool(start.is_some()));
+            let mut n =
+                Node::new(NodeKind::List).with_attr(attr::ORDERED, Value::Bool(start.is_some()));
             if let Some(s) = start {
                 n = n.with_attr(attr::START, i64::try_from(*s).unwrap_or(0));
             }
@@ -185,19 +189,31 @@ fn start_node(tag: &Tag<'_>) -> Node {
             Node::new(NodeKind::FootnoteDef).with_attr(attr::VALUE, label.to_string())
         }
         Tag::Table(aligns) => {
-            let arr: Vec<Value> = aligns.iter().map(|a| Value::from(alignment_str(*a))).collect();
+            let arr: Vec<Value> = aligns
+                .iter()
+                .map(|a| Value::from(alignment_str(*a)))
+                .collect();
             Node::new(NodeKind::Table).with_attr(attr::ALIGNS, Value::Array(Arc::new(arr)))
         }
-        Tag::Link { link_type, dest_url, title, .. } => {
-            link_like(NodeKind::Link, *link_type, dest_url, title)
-        }
-        Tag::Image { link_type, dest_url, title, .. } => {
-            link_like(NodeKind::Image, *link_type, dest_url, title)
-        }
-        Tag::MetadataBlock(kind) => Node::new(NodeKind::Html).with_attr(attr::LANG, match kind {
-            MetadataBlockKind::YamlStyle => "yaml",
-            MetadataBlockKind::PlusesStyle => "toml",
-        }),
+        Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            ..
+        } => link_like(NodeKind::Link, *link_type, dest_url, title),
+        Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            ..
+        } => link_like(NodeKind::Image, *link_type, dest_url, title),
+        Tag::MetadataBlock(kind) => Node::new(NodeKind::Html).with_attr(
+            attr::LANG,
+            match kind {
+                MetadataBlockKind::YamlStyle => "yaml",
+                MetadataBlockKind::PlusesStyle => "toml",
+            },
+        ),
         _ => Node::new(simple_kind(tag)),
     }
 }
@@ -214,7 +230,9 @@ fn simple_kind(tag: &Tag<'_>) -> NodeKind {
         Tag::Emphasis | Tag::Superscript | Tag::Subscript => NodeKind::Emphasis,
         Tag::Strong => NodeKind::Strong,
         Tag::Strikethrough => NodeKind::Strikethrough,
-        Tag::DefinitionList | Tag::DefinitionListTitle | Tag::DefinitionListDefinition => NodeKind::List,
+        Tag::DefinitionList | Tag::DefinitionListTitle | Tag::DefinitionListDefinition => {
+            NodeKind::List
+        }
         _ => NodeKind::Paragraph,
     }
 }
@@ -308,7 +326,9 @@ fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
         NodeKind::Rule => return out.push(Event::Rule),
         NodeKind::FootnoteRef => return out.push(Event::FootnoteReference(val(attr::VALUE))),
         NodeKind::Code => {
-            out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(val(attr::LANG)))));
+            out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(val(
+                attr::LANG,
+            )))));
             if let Some(Value::String(lit)) = node.attrs.get(attr::LITERAL) {
                 out.push(Event::Text(CowStr::Boxed(lit.to_string().into_boxed_str())));
             }
@@ -317,11 +337,19 @@ fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
         }
         NodeKind::Heading => {
             let lv = level(node);
-            let tag = Tag::Heading { level: lv, id: None, classes: vec![], attrs: vec![] };
+            let tag = Tag::Heading {
+                level: lv,
+                id: None,
+                classes: vec![],
+                attrs: vec![],
+            };
             (Some(tag), Some(TagEnd::Heading(lv)))
         }
         NodeKind::Paragraph => (Some(Tag::Paragraph), Some(TagEnd::Paragraph)),
-        NodeKind::Quote => (Some(Tag::BlockQuote(None::<BlockQuoteKind>)), Some(TagEnd::BlockQuote(None))),
+        NodeKind::Quote => (
+            Some(Tag::BlockQuote(None::<BlockQuoteKind>)),
+            Some(TagEnd::BlockQuote(None)),
+        ),
         NodeKind::List => {
             let ordered = matches!(node.attrs.get(attr::ORDERED), Some(Value::Bool(true)));
             let start = ordered.then(|| {
@@ -339,12 +367,22 @@ fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
         NodeKind::Strikethrough => (Some(Tag::Strikethrough), Some(TagEnd::Strikethrough)),
         NodeKind::Link => {
             let (dest_url, title) = href_title();
-            let tag = Tag::Link { link_type: LinkType::Inline, dest_url, title, id: CowStr::Borrowed("") };
+            let tag = Tag::Link {
+                link_type: LinkType::Inline,
+                dest_url,
+                title,
+                id: CowStr::Borrowed(""),
+            };
             (Some(tag), Some(TagEnd::Link))
         }
         NodeKind::Image => {
             let (dest_url, title) = href_title();
-            let tag = Tag::Image { link_type: LinkType::Inline, dest_url, title, id: CowStr::Borrowed("") };
+            let tag = Tag::Image {
+                link_type: LinkType::Inline,
+                dest_url,
+                title,
+                id: CowStr::Borrowed(""),
+            };
             (Some(tag), Some(TagEnd::Image))
         }
         NodeKind::FootnoteDef => (
@@ -415,7 +453,8 @@ fn attach_frontmatter(root: &mut Node, source: &str) {
         _ => None,
     };
     if let Some(json) = parsed {
-        root.attrs.insert(attr::FRONTMATTER, crate::emit::json::value_from_json(json));
+        root.attrs
+            .insert(attr::FRONTMATTER, crate::emit::json::value_from_json(json));
     }
 }
 
@@ -423,7 +462,9 @@ fn attach_frontmatter(root: &mut Node, source: &str) {
 fn strip_fences(body: &str) -> &str {
     let trimmed = body.trim_matches('\n');
     let after_open = trimmed.split_once('\n').map_or("", |(_, rest)| rest);
-    after_open.rsplit_once('\n').map_or(after_open, |(prefix, _)| prefix)
+    after_open
+        .rsplit_once('\n')
+        .map_or(after_open, |(prefix, _)| prefix)
 }
 
 #[cfg(test)]
@@ -447,27 +488,57 @@ mod tests {
     #[test]
     fn build_tree_populates_expected_attrs() {
         first_node("# Hello World\n", |n| {
-            assert!(matches!(n.attrs.get(attr::LEVEL), Some(Value::Number(x)) if (*x - 1.0).abs() < 1e-9));
-            assert!(matches!(n.attrs.get(attr::ANCHOR), Some(Value::String(s)) if s.as_ref() == "hello-world"));
+            assert!(
+                matches!(n.attrs.get(attr::LEVEL), Some(Value::Number(x)) if (*x - 1.0).abs() < 1e-9)
+            );
+            assert!(
+                matches!(n.attrs.get(attr::ANCHOR), Some(Value::String(s)) if s.as_ref() == "hello-world")
+            );
         });
         first_node("```rust\nfn main() {}\n```\n", |n| {
-            assert!(matches!(n.attrs.get(attr::LANG), Some(Value::String(s)) if s.as_ref() == "rust"));
-            assert!(matches!(n.attrs.get(attr::LITERAL), Some(Value::String(s)) if s.as_ref() == "fn main() {}\n"));
+            assert!(
+                matches!(n.attrs.get(attr::LANG), Some(Value::String(s)) if s.as_ref() == "rust")
+            );
+            assert!(
+                matches!(n.attrs.get(attr::LITERAL), Some(Value::String(s)) if s.as_ref() == "fn main() {}\n")
+            );
         });
         first_node("- [x] done\n- [ ] open\n", |list| {
-            let items: Vec<_> = list.children.iter()
-                .filter_map(|v| if let Value::Node(n) = v { Some(n) } else { None })
+            let items: Vec<_> = list
+                .children
+                .iter()
+                .filter_map(|v| {
+                    if let Value::Node(n) = v {
+                        Some(n)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            assert!(matches!(items[0].attrs.get(attr::CHECKED), Some(Value::Bool(true))));
-            assert!(matches!(items[1].attrs.get(attr::CHECKED), Some(Value::Bool(false))));
+            assert!(matches!(
+                items[0].attrs.get(attr::CHECKED),
+                Some(Value::Bool(true))
+            ));
+            assert!(matches!(
+                items[1].attrs.get(attr::CHECKED),
+                Some(Value::Bool(false))
+            ));
         });
         first_node("See [docs](https://example.com).\n", |para| {
-            let link = para.children.iter().find_map(|c| match c {
-                Value::Node(n) if n.kind == NodeKind::Link => Some(n),
-                _ => None,
-            }).expect("link present");
-            assert!(matches!(link.attrs.get(attr::HREF), Some(Value::String(s)) if s.as_ref() == "https://example.com"));
-            assert!(matches!(link.attrs.get(attr::KIND_DETAIL), Some(Value::String(s)) if s.as_ref() == "inline"));
+            let link = para
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    Value::Node(n) if n.kind == NodeKind::Link => Some(n),
+                    _ => None,
+                })
+                .expect("link present");
+            assert!(
+                matches!(link.attrs.get(attr::HREF), Some(Value::String(s)) if s.as_ref() == "https://example.com")
+            );
+            assert!(
+                matches!(link.attrs.get(attr::KIND_DETAIL), Some(Value::String(s)) if s.as_ref() == "inline")
+            );
         });
     }
 }

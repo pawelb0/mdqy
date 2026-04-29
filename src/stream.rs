@@ -19,10 +19,7 @@ type StreamItem = Result<Value, RunError>;
 /// Run a stream-eligible query. `analyze::choose_mode` gates the
 /// dispatch; the `analyze::plan` call here re-derives the plan and
 /// fails loud if the two ever disagree.
-pub fn run<'a, I>(
-    expr: Expr,
-    events: I,
-) -> Box<dyn Iterator<Item = StreamItem> + 'a>
+pub fn run<'a, I>(expr: Expr, events: I) -> Box<dyn Iterator<Item = StreamItem> + 'a>
 where
     I: Iterator<Item = Event<'a>> + 'a,
 {
@@ -207,9 +204,13 @@ fn scalar_from_start(tag: &Tag<'_>, attr: &str) -> Option<Value> {
         (Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }, "href") => {
             Some(Value::from(dest_url.to_string()))
         }
-        (Tag::Link { title, .. } | Tag::Image { title, .. }, "title") => Some(
-            if title.is_empty() { Value::Null } else { Value::from(title.to_string()) },
-        ),
+        (Tag::Link { title, .. } | Tag::Image { title, .. }, "title") => {
+            Some(if title.is_empty() {
+                Value::Null
+            } else {
+                Value::from(title.to_string())
+            })
+        }
         (Tag::CodeBlock(CodeBlockKind::Fenced(lang)), "lang") => {
             Some(Value::from(lang.to_string()))
         }

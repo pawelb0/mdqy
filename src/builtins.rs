@@ -22,7 +22,7 @@ type Stream = Box<dyn Iterator<Item = Result<Value, RunError>>>;
 /// Invoke the builtin called `name`. Returns `None` if the name
 /// isn't registered, so the caller can surface `unknown builtin`.
 pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stream> {
-    use NodeKind::{Heading, Paragraph, Code, Link, Image, Item, List, Table, Quote, FootnoteDef};
+    use NodeKind::{Code, FootnoteDef, Heading, Image, Item, Link, List, Paragraph, Quote, Table};
     Some(match name {
         "headings" => descendants(input, Heading),
         "paragraphs" => descendants(input, Paragraph),
@@ -168,9 +168,11 @@ fn collect(v: &Value, kind: NodeKind, out: &mut Vec<Value>) {
 fn headings_at(input: Value, level: i64) -> Stream {
     let mut all = Vec::new();
     collect(&input, NodeKind::Heading, &mut all);
-    Box::new(all.into_iter()
-        .filter(move |v| matches!(v, Value::Node(n) if heading_level(n) == level))
-        .map(Ok))
+    Box::new(
+        all.into_iter()
+            .filter(move |v| matches!(v, Value::Node(n) if heading_level(n) == level))
+            .map(Ok),
+    )
 }
 
 fn heading_level(n: &Node) -> i64 {
@@ -247,7 +249,11 @@ fn sections(args: &[Expr], input: Value, env: &Env) -> Stream {
             Ok(None) => return Box::new(std::iter::empty()),
             Err(e) => return err(e),
         },
-        _ => return err(RunError::Other("sections: expected 0 or 1 arguments".into())),
+        _ => {
+            return err(RunError::Other(
+                "sections: expected 0 or 1 arguments".into(),
+            ))
+        }
     };
     let Value::Node(root) = &input else {
         return err(type_err("node", &input));
@@ -322,7 +328,9 @@ fn length_of(v: &Value) -> Result<Value, RunError> {
 fn cells_of(input: Value) -> Stream {
     match &input {
         Value::Node(n) if n.kind == NodeKind::Row => {
-            let out: Vec<Value> = n.children.iter()
+            let out: Vec<Value> = n
+                .children
+                .iter()
                 .filter(|c| matches!(c, Value::Node(child) if child.kind == NodeKind::Cell))
                 .cloned()
                 .collect();
@@ -337,16 +345,25 @@ fn cells_of(input: Value) -> Stream {
 fn headers_of(input: Value) -> Stream {
     let mut tables = Vec::new();
     collect(&input, NodeKind::Table, &mut tables);
-    let out: Vec<Value> = tables.iter()
-        .filter_map(|t| match t { Value::Node(n) => Some(n), _ => None })
-        .filter_map(|table| table.children.iter().find_map(|c| match c {
-            Value::Node(n) if n.kind == NodeKind::Row => Some(n.clone()),
+    let out: Vec<Value> = tables
+        .iter()
+        .filter_map(|t| match t {
+            Value::Node(n) => Some(n),
             _ => None,
-        }))
-        .flat_map(|row| row.children.iter()
-            .filter(|c| matches!(c, Value::Node(n) if n.kind == NodeKind::Cell))
-            .cloned()
-            .collect::<Vec<_>>())
+        })
+        .filter_map(|table| {
+            table.children.iter().find_map(|c| match c {
+                Value::Node(n) if n.kind == NodeKind::Row => Some(n.clone()),
+                _ => None,
+            })
+        })
+        .flat_map(|row| {
+            row.children
+                .iter()
+                .filter(|c| matches!(c, Value::Node(n) if n.kind == NodeKind::Cell))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
         .collect();
     Box::new(out.into_iter().map(Ok))
 }
@@ -376,11 +393,7 @@ fn first_or(args: &[Expr], input: Value, env: &Env, first: bool) -> Stream {
         return one(head_or_tail(&input, first));
     }
     let s = eval::eval(&args[0], input, env);
-    let pick = if first {
-        s.take(1).next()
-    } else {
-        s.last()
-    };
+    let pick = if first { s.take(1).next() } else { s.last() };
     one(pick.unwrap_or(Ok(Value::Null)))
 }
 
@@ -437,8 +450,10 @@ fn has(args: &[Expr], input: Value, env: &Env) -> Stream {
     let present = match eval_first(&args[0], &input, env) {
         Ok(Some(Value::String(s))) => match &input {
             Value::Object(m) => m.contains_key(s.as_ref()),
-            Value::Node(n) => matches!(s.as_ref(), "kind" | "children" | "text" | "attrs")
-                || n.attrs.contains_key(&*s.to_string()),
+            Value::Node(n) => {
+                matches!(s.as_ref(), "kind" | "children" | "text" | "attrs")
+                    || n.attrs.contains_key(&*s.to_string())
+            }
             _ => false,
         },
         Ok(Some(Value::Number(n))) => {
@@ -461,7 +476,11 @@ fn keys_of(input: &Value) -> Result<Value, RunError> {
         Value::Object(m) => m.keys().cloned().map(Value::from).collect(),
         Value::Array(a) => (0..a.len() as i64).map(Value::from).collect(),
         Value::Node(n) => {
-            let mut ks: Vec<Value> = vec![Value::from("kind"), Value::from("children"), Value::from("text")];
+            let mut ks: Vec<Value> = vec![
+                Value::from("kind"),
+                Value::from("children"),
+                Value::from("text"),
+            ];
             ks.extend(n.attrs.keys().map(|k| Value::from(*k)));
             ks
         }
@@ -481,9 +500,15 @@ fn add_all(input: &Value) -> Result<Value, RunError> {
     iter.try_fold(first, |a, b| eval::apply_add(&a, &b))
 }
 
-fn reduce_bool(input: &Value, combine: fn(bool, bool) -> bool, init: bool) -> Result<Value, RunError> {
+fn reduce_bool(
+    input: &Value,
+    combine: fn(bool, bool) -> bool,
+    init: bool,
+) -> Result<Value, RunError> {
     match input {
-        Value::Array(a) => Ok(Value::Bool(a.iter().fold(init, |acc, v| combine(acc, v.truthy())))),
+        Value::Array(a) => Ok(Value::Bool(
+            a.iter().fold(init, |acc, v| combine(acc, v.truthy())),
+        )),
         Value::Null => Ok(Value::Bool(init)),
         other => Err(type_err("array", other)),
     }
@@ -532,7 +557,9 @@ fn to_string_value(v: &Value) -> Result<Value, RunError> {
         Value::String(_) => v.clone(),
         Value::Null => Value::from("null"),
         Value::Bool(b) => Value::from(if *b { "true" } else { "false" }),
-        Value::Number(n) if n.fract() == 0.0 && n.is_finite() => Value::from((*n as i64).to_string()),
+        Value::Number(n) if n.fract() == 0.0 && n.is_finite() => {
+            Value::from((*n as i64).to_string())
+        }
         Value::Number(n) => Value::from(n.to_string()),
         Value::Array(_) | Value::Object(_) => Value::from(json_string(v)),
         Value::Node(n) => Value::from(plain_text(&n.children)),
@@ -571,7 +598,9 @@ fn regex_bool(
 
 fn regex_sub(args: &[Expr], input: &Value, env: &Env, all: bool) -> Result<Value, RunError> {
     if args.len() < 2 {
-        return Err(RunError::Other("sub/gsub: expected (pattern; replacement)".into()));
+        return Err(RunError::Other(
+            "sub/gsub: expected (pattern; replacement)".into(),
+        ));
     }
     let s = expect_string(input)?;
     let pattern = eval_string_arg(Some(&args[0]), input, env)?;
@@ -675,12 +704,12 @@ fn contains(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> 
 fn value_contains(haystack: &Value, needle: &Value) -> bool {
     match (haystack, needle) {
         (Value::String(a), Value::String(b)) => a.contains(b.as_ref()),
-        (Value::Array(a), Value::Array(b)) => b
+        (Value::Array(a), Value::Array(b)) => {
+            b.iter().all(|nb| a.iter().any(|ha| value_contains(ha, nb)))
+        }
+        (Value::Object(a), Value::Object(b)) => b
             .iter()
-            .all(|nb| a.iter().any(|ha| value_contains(ha, nb))),
-        (Value::Object(a), Value::Object(b)) => b.iter().all(|(k, v)| {
-            a.get(k).is_some_and(|av| value_contains(av, v))
-        }),
+            .all(|(k, v)| a.get(k).is_some_and(|av| value_contains(av, v))),
         (a, b) => eval::value_cmp_for_sort(a, b).is_eq(),
     }
 }
@@ -692,8 +721,8 @@ fn to_json(input: &Value) -> Result<Value, RunError> {
 
 fn from_json(input: &Value) -> Result<Value, RunError> {
     let s = expect_string(input)?;
-    let j: serde_json::Value = serde_json::from_str(s)
-        .map_err(|e| RunError::Other(format!("fromjson: {e}")))?;
+    let j: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| RunError::Other(format!("fromjson: {e}")))?;
     Ok(crate::emit::json::value_from_json(j))
 }
 
@@ -826,13 +855,16 @@ fn by_key_array(
         .map(|v| eval_key(key_fn, v, env).map(|k| (k, v.clone())))
         .collect::<Result<_, _>>()?;
     reorder(&mut items);
-    Ok(Value::Array(Arc::new(items.into_iter().map(|(_, v)| v).collect())))
+    Ok(Value::Array(Arc::new(
+        items.into_iter().map(|(_, v)| v).collect(),
+    )))
 }
 
 fn group_by(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let key_fn = key_fn_arg(args, "group_by")?;
     let arr = expect_array(&input)?;
-    let mut items: Vec<(Value, Value)> = arr.iter()
+    let mut items: Vec<(Value, Value)> = arr
+        .iter()
         .map(|v| eval_key(key_fn, v, env).map(|k| (k, v.clone())))
         .collect::<Result<_, _>>()?;
     items.sort_by(|(ka, _), (kb, _)| eval::value_cmp_for_sort(ka, kb));
@@ -840,24 +872,37 @@ fn group_by(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let mut groups: Vec<Vec<Value>> = Vec::new();
     let mut last_key: Option<Value> = None;
     for (k, v) in items {
-        if last_key.as_ref().is_none_or(|prev| !eval::value_cmp_for_sort(prev, &k).is_eq()) {
+        if last_key
+            .as_ref()
+            .is_none_or(|prev| !eval::value_cmp_for_sort(prev, &k).is_eq())
+        {
             groups.push(Vec::new());
             last_key = Some(k);
         }
         groups.last_mut().unwrap().push(v);
     }
-    let out: Vec<Value> = groups.into_iter().map(|g| Value::Array(Arc::new(g))).collect();
+    let out: Vec<Value> = groups
+        .into_iter()
+        .map(|g| Value::Array(Arc::new(g)))
+        .collect();
     Ok(Value::Array(Arc::new(out)))
 }
 
 fn extreme_by(args: &[Expr], input: Value, env: &Env, least: bool) -> Result<Value, RunError> {
     let key_fn = key_fn_arg(args, "min_by/max_by")?;
     let arr = expect_array(&input)?;
-    let pick = if least { Ordering::is_lt } else { Ordering::is_gt };
+    let pick = if least {
+        Ordering::is_lt
+    } else {
+        Ordering::is_gt
+    };
     let mut best: Option<(Value, Value)> = None;
     for v in arr {
         let k = eval_key(key_fn, v, env)?;
-        if best.as_ref().is_none_or(|(bk, _)| pick(eval::value_cmp_for_sort(&k, bk))) {
+        if best
+            .as_ref()
+            .is_none_or(|(bk, _)| pick(eval::value_cmp_for_sort(&k, bk)))
+        {
             best = Some((k, v.clone()));
         }
     }
@@ -866,8 +911,14 @@ fn extreme_by(args: &[Expr], input: Value, env: &Env, least: bool) -> Result<Val
 
 fn extreme(input: Value, least: bool) -> Result<Value, RunError> {
     let arr = expect_array(&input)?;
-    let pick = if least { Ordering::is_lt } else { Ordering::is_gt };
-    Ok(arr.iter().skip(1)
+    let pick = if least {
+        Ordering::is_lt
+    } else {
+        Ordering::is_gt
+    };
+    Ok(arr
+        .iter()
+        .skip(1)
         .fold(arr.first(), |best, v| match best {
             Some(b) if pick(eval::value_cmp_for_sort(v, b)) => Some(v),
             _ => best,
@@ -877,7 +928,8 @@ fn extreme(input: Value, least: bool) -> Result<Value, RunError> {
 }
 
 fn key_fn_arg<'a>(args: &'a [Expr], name: &str) -> Result<&'a Expr, RunError> {
-    args.first().ok_or_else(|| RunError::Other(format!("{name}: expected one argument")))
+    args.first()
+        .ok_or_else(|| RunError::Other(format!("{name}: expected one argument")))
 }
 
 fn eval_key(f: &Expr, v: &Value, env: &Env) -> Result<Value, RunError> {
@@ -905,11 +957,14 @@ fn eval_number(expr: &Expr, input: &Value, env: &Env, default: f64) -> Result<f6
 
 /// `range(m; n)` yields integers `[m, n)`. `range(m; n; step)` strides.
 fn range(args: &[Expr], input: Value, env: &Env) -> Stream {
-    let nums: Result<Vec<f64>, _> = args.iter().map(|a| match eval_first(a, &input, env)? {
-        Some(Value::Number(n)) => Ok(n),
-        Some(other) => Err(type_err("number", &other)),
-        None => Err(RunError::Other("range: empty argument stream".into())),
-    }).collect();
+    let nums: Result<Vec<f64>, _> = args
+        .iter()
+        .map(|a| match eval_first(a, &input, env)? {
+            Some(Value::Number(n)) => Ok(n),
+            Some(other) => Err(type_err("number", &other)),
+            None => Err(RunError::Other("range: empty argument stream".into())),
+        })
+        .collect();
     let (start, stop, step) = match nums.as_deref() {
         Ok([n]) => (0.0, *n, 1.0),
         Ok([m, n]) => (*m, *n, 1.0),
@@ -954,7 +1009,9 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     if n < 0 {
         return Ok(Value::Null);
     }
-    eval::eval(&args[1], input, env).nth(n as usize).unwrap_or(Ok(Value::Null))
+    eval::eval(&args[1], input, env)
+        .nth(n as usize)
+        .unwrap_or(Ok(Value::Null))
 }
 
 // ---- paths -----------------------------------------------------------------
@@ -999,7 +1056,9 @@ fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let mut cur = input;
     for step in path.iter() {
         cur = match (&cur, step) {
-            (Value::Object(m), Value::String(k)) => m.get(k.as_ref()).cloned().unwrap_or(Value::Null),
+            (Value::Object(m), Value::String(k)) => {
+                m.get(k.as_ref()).cloned().unwrap_or(Value::Null)
+            }
             (Value::Array(a), Value::Number(n)) => {
                 let i = *n as i64;
                 let idx = if i < 0 { a.len() as i64 + i } else { i };
@@ -1056,7 +1115,11 @@ fn set_path_inner(root: Value, path: &[Value], value: Value) -> Result<Value, Ru
                 other => return Err(type_err("array or null", &other)),
             };
             let i = *n as i64;
-            let idx = if i < 0 { (arr.len() as i64 + i).max(0) } else { i } as usize;
+            let idx = if i < 0 {
+                (arr.len() as i64 + i).max(0)
+            } else {
+                i
+            } as usize;
             while arr.len() <= idx {
                 arr.push(Value::Null);
             }
@@ -1066,7 +1129,6 @@ fn set_path_inner(root: Value, path: &[Value], value: Value) -> Result<Value, Ru
         other => Err(type_err("string or number path step", other)),
     }
 }
-
 
 // ---- markdown: toc ---------------------------------------------------------
 
@@ -1125,7 +1187,11 @@ fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError>
 /// `null` when the document has none.
 fn frontmatter(input: &Value) -> Value {
     match input {
-        Value::Node(n) => n.attrs.get(attr::FRONTMATTER).cloned().unwrap_or(Value::Null),
+        Value::Node(n) => n
+            .attrs
+            .get(attr::FRONTMATTER)
+            .cloned()
+            .unwrap_or(Value::Null),
         _ => Value::Null,
     }
 }

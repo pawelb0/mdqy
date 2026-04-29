@@ -23,8 +23,8 @@ use crate::value::Value;
 /// Parse, mutate, serialise. Top-level entry for `--output md`
 /// and `-U`.
 pub fn transform_bytes(expr: &Expr, source: &[u8]) -> Result<Vec<u8>, RunError> {
-    let source_str = std::str::from_utf8(source)
-        .map_err(|e| RunError::Io(format!("source not utf-8: {e}")))?;
+    let source_str =
+        std::str::from_utf8(source).map_err(|e| RunError::Io(format!("source not utf-8: {e}")))?;
     let root = build_tree_from_source(source_str);
     let mutated = apply_expr(expr, Arc::new(root))?;
     let mut out = Vec::with_capacity(source.len());
@@ -105,7 +105,10 @@ fn apply_walk_f(f: &Expr, node: Arc<Node>) -> Result<Arc<Node>, RunError> {
             let mid = apply_walk_f(a, node)?;
             apply_walk_f(b, mid)
         }
-        Expr::If { branches, else_branch } => {
+        Expr::If {
+            branches,
+            else_branch,
+        } => {
             for (cond, then_branch) in branches {
                 match eval::eval(cond, Value::Node(node.clone()), &Env::default()).next() {
                     Some(Ok(v)) if v.truthy() => return apply_walk_f(then_branch, node),
@@ -267,4 +270,3 @@ fn walk_and_update(
     }
     Ok(Arc::new(new_node))
 }
-

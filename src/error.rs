@@ -41,7 +41,9 @@ impl CompileError {
     #[must_use]
     pub fn offset(&self) -> usize {
         match self {
-            Self::Lex { offset, .. } | Self::Parse { offset, .. } | Self::Selector { offset, .. } => *offset,
+            Self::Lex { offset, .. }
+            | Self::Parse { offset, .. }
+            | Self::Selector { offset, .. } => *offset,
             Self::UnknownBuiltin { .. } => 0,
         }
     }
@@ -55,9 +57,7 @@ impl CompileError {
         let gutter = format!("{line_no:>4}");
         let blank = " ".repeat(gutter.len());
         let caret = " ".repeat(col) + "^";
-        format!(
-            "error: {self}\n {blank} |\n {gutter} | {line_text}\n {blank} | {caret}"
-        )
+        format!("error: {self}\n {blank} |\n {gutter} | {line_text}\n {blank} | {caret}")
     }
 }
 

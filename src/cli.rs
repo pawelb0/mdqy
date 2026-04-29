@@ -2,9 +2,9 @@
 
 use std::fs;
 use std::io;
-use std::io::Write as _;
 #[cfg(feature = "tty")]
 use std::io::IsTerminal;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
@@ -18,7 +18,11 @@ use crate::walk::{walk_inputs, WalkOptions};
 
 /// mdqy: jq for markdown.
 #[derive(Debug, Parser)]
-#[command(name = "mdqy", version, about = "jq for markdown: query and transform Markdown")]
+#[command(
+    name = "mdqy",
+    version,
+    about = "jq for markdown: query and transform Markdown"
+)]
 #[allow(clippy::struct_excessive_bools)] // CLI flags map 1:1 to bools.
 pub struct Args {
     /// mdqy expression (required unless --from-file is set).
@@ -172,8 +176,8 @@ pub fn run() -> anyhow::Result<()> {
     };
 
     let trimmed = expression.trim();
-    let query = crate::Query::compile(trimmed)
-        .map_err(|e| anyhow::anyhow!("{}", e.render(trimmed)))?;
+    let query =
+        crate::Query::compile(trimmed).map_err(|e| anyhow::anyhow!("{}", e.render(trimmed)))?;
 
     if args.explain_mode {
         println!("mode: {}", query.mode_name());
@@ -204,19 +208,38 @@ pub fn run() -> anyhow::Result<()> {
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
     if args.null_input {
-        return emit_stream(query.run_with_env(Value::Null, env), "", None, format, &args, &mut stdout);
+        return emit_stream(
+            query.run_with_env(Value::Null, env),
+            "",
+            None,
+            format,
+            &args,
+            &mut stdout,
+        );
     }
     if args.stdin {
         let mut buf = String::new();
         io::Read::read_to_string(&mut io::stdin(), &mut buf)?;
         if !query.is_read_only() && !args.raw_input {
-            let new_bytes = query.transform_bytes(buf.as_bytes())
+            let new_bytes = query
+                .transform_bytes(buf.as_bytes())
                 .map_err(|e| anyhow::anyhow!("transform: {e}"))?;
             stdout.write_all(&new_bytes)?;
             return Ok(());
         }
-        let input = if args.raw_input { Value::from(buf.clone()) } else { Value::from(crate::events::build_tree_from_source(&buf)) };
-        return emit_stream(query.run_with_env(input, env), &buf, None, format, &args, &mut stdout);
+        let input = if args.raw_input {
+            Value::from(buf.clone())
+        } else {
+            Value::from(crate::events::build_tree_from_source(&buf))
+        };
+        return emit_stream(
+            query.run_with_env(input, env),
+            &buf,
+            None,
+            format,
+            &args,
+            &mut stdout,
+        );
     }
 
     if args.in_place || args.dry_run || !query.is_read_only() {
@@ -230,7 +253,14 @@ pub fn run() -> anyhow::Result<()> {
         _ if args.raw_input => {
             for path in &inputs {
                 let source = fs::read_to_string(path)?;
-                emit_stream(query.run_with_env(Value::from(source.clone()), env.clone()), &source, Some(path), format, &args, &mut stdout)?;
+                emit_stream(
+                    query.run_with_env(Value::from(source.clone()), env.clone()),
+                    &source,
+                    Some(path),
+                    format,
+                    &args,
+                    &mut stdout,
+                )?;
             }
         }
         Aggregation::PerFile if args.workers != 1 && !matches!(format, OutputFormat::Tty) => {
@@ -240,20 +270,42 @@ pub fn run() -> anyhow::Result<()> {
             for path in &inputs {
                 let source = fs::read_to_string(path)?;
                 let root = crate::events::build_tree_from_source(&source);
-                emit_stream(query.run_with_env(Value::from(root), env.clone()), &source, Some(path), format, &args, &mut stdout)?;
+                emit_stream(
+                    query.run_with_env(Value::from(root), env.clone()),
+                    &source,
+                    Some(path),
+                    format,
+                    &args,
+                    &mut stdout,
+                )?;
             }
         }
         Aggregation::Slurp => {
             let input = Value::Array(std::sync::Arc::new(read_all_roots(&inputs)?));
-            emit_stream(query.run_with_env(input, env), "", None, format, &args, &mut stdout)?;
+            emit_stream(
+                query.run_with_env(input, env),
+                "",
+                None,
+                format,
+                &args,
+                &mut stdout,
+            )?;
         }
         Aggregation::Merge => {
             let mut virt = crate::ast::Node::new(crate::ast::NodeKind::Root);
             for path in &inputs {
                 let source = fs::read_to_string(path)?;
-                virt.children.extend(crate::events::build_tree_from_source(&source).children);
+                virt.children
+                    .extend(crate::events::build_tree_from_source(&source).children);
             }
-            emit_stream(query.run_with_env(Value::from(virt), env), "", None, format, &args, &mut stdout)?;
+            emit_stream(
+                query.run_with_env(Value::from(virt), env),
+                "",
+                None,
+                format,
+                &args,
+                &mut stdout,
+            )?;
         }
     }
     Ok(())
@@ -290,7 +342,8 @@ fn emit_stream<W: io::Write>(
             None => anyhow::anyhow!("runtime error: {e}"),
         })?;
         let tagged;
-        let out_value = if args.with_path && path.is_some() && matches!(format, OutputFormat::Json) {
+        let out_value = if args.with_path && path.is_some() && matches!(format, OutputFormat::Json)
+        {
             tagged = tag_with_path(&value, path);
             &tagged
         } else {
@@ -306,7 +359,11 @@ fn emit_stream<W: io::Write>(
 fn tag_with_path(value: &Value, path: Option<&Path>) -> Value {
     use std::collections::BTreeMap;
     let path_str = path.map(|p| p.display().to_string()).unwrap_or_default();
-    let obj: BTreeMap<String, Value> = [("path".into(), Value::from(path_str)), ("value".into(), value.clone())].into();
+    let obj: BTreeMap<String, Value> = [
+        ("path".into(), Value::from(path_str)),
+        ("value".into(), value.clone()),
+    ]
+    .into();
     Value::Object(std::sync::Arc::new(obj))
 }
 
@@ -327,13 +384,23 @@ fn run_per_file_parallel(
         .build()
         .map_err(|e| anyhow::anyhow!("thread pool: {e}"))?;
     let bufs: Vec<anyhow::Result<Vec<u8>>> = pool.install(|| {
-        inputs.par_iter().map(|path| {
-            let source = fs::read_to_string(path)?;
-            let root = crate::events::build_tree_from_source(&source);
-            let mut buf: Vec<u8> = Vec::new();
-            emit_stream(query.run_with_env(Value::from(root), env.clone()), &source, Some(path), format, args, &mut buf)?;
-            Ok(buf)
-        }).collect()
+        inputs
+            .par_iter()
+            .map(|path| {
+                let source = fs::read_to_string(path)?;
+                let root = crate::events::build_tree_from_source(&source);
+                let mut buf: Vec<u8> = Vec::new();
+                emit_stream(
+                    query.run_with_env(Value::from(root), env.clone()),
+                    &source,
+                    Some(path),
+                    format,
+                    args,
+                    &mut buf,
+                )?;
+                Ok(buf)
+            })
+            .collect()
     });
     for buf in bufs {
         stdout.write_all(&buf?)?;
@@ -415,7 +482,9 @@ fn run_watch(
 fn read_all_roots(inputs: &[PathBuf]) -> anyhow::Result<Vec<Value>> {
     inputs
         .iter()
-        .map(|p| fs::read_to_string(p).map(|s| Value::from(crate::events::build_tree_from_source(&s))))
+        .map(|p| {
+            fs::read_to_string(p).map(|s| Value::from(crate::events::build_tree_from_source(&s)))
+        })
         .collect::<Result<_, _>>()
         .map_err(Into::into)
 }
@@ -427,7 +496,9 @@ fn run_transform(
     stdout: &mut impl io::Write,
 ) -> anyhow::Result<()> {
     let source = fs::read(path)?;
-    let new_bytes = query.transform_bytes(&source).map_err(|e| anyhow::anyhow!("transform: {e}"))?;
+    let new_bytes = query
+        .transform_bytes(&source)
+        .map_err(|e| anyhow::anyhow!("transform: {e}"))?;
     if args.dry_run {
         let old = String::from_utf8_lossy(&source);
         let new = String::from_utf8_lossy(&new_bytes);
@@ -449,7 +520,6 @@ fn run_transform(
     Ok(())
 }
 
-
 fn emit_value<W: io::Write>(
     out: &mut W,
     value: &Value,
@@ -458,7 +528,14 @@ fn emit_value<W: io::Write>(
     source: &str,
 ) -> anyhow::Result<()> {
     let emit_json = |out: &mut W, compact: bool| -> anyhow::Result<()> {
-        json::emit(out, value, JsonOptions { compact, include_spans: args.with_spans })?;
+        json::emit(
+            out,
+            value,
+            JsonOptions {
+                compact,
+                include_spans: args.with_spans,
+            },
+        )?;
         Ok(())
     };
     let emit_line = |out: &mut W, s: &str| -> anyhow::Result<()> {
@@ -477,7 +554,9 @@ fn emit_value<W: io::Write>(
             emit_json(out, args.compact)?;
         }
         (OutputFormat::Text, Value::String(s)) => emit_line(out, s)?,
-        (OutputFormat::Text, Value::Node(n)) => emit_line(out, &crate::events::plain_text(&n.children))?,
+        (OutputFormat::Text, Value::Node(n)) => {
+            emit_line(out, &crate::events::plain_text(&n.children))?
+        }
         (OutputFormat::Text, _) => emit_json(out, true)?,
         #[cfg(feature = "tty")]
         (OutputFormat::Tty, _) => crate::emit::tty::emit(out, std::iter::once(value.clone()))

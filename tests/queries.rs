@@ -36,7 +36,10 @@ fn strings(expr: &str) -> Vec<String> {
 fn query_cases() {
     let cases: &[(&str, &[&str])] = &[
         ("headings | .text", &["Tiny", "Second heading"]),
-        ("headings | select(.level == 2) | .text", &["Second heading"]),
+        (
+            "headings | select(.level == 2) | .text",
+            &["Second heading"],
+        ),
         ("codeblocks | .lang", &["rust"]),
         ("links | .href", &["https://example.com"]),
         ("[headings] | length", &["2"]),
@@ -131,11 +134,11 @@ fn extra_builtins() {
     assert_eq!(run_null("[range(3)] | length"), ["3"]);
     assert_eq!(run_null("[limit(2; range(100))] | length"), ["2"]);
     assert_eq!(run_null("nth(1; range(10))"), ["1"]);
-    assert_eq!(run_null("\"a,b,c\" | split(\",\") | join(\"-\")"), ["a-b-c"]);
     assert_eq!(
-        run_null("[{n:3},{n:1},{n:2}] | min_by(.n) | .n"),
-        ["1"]
+        run_null("\"a,b,c\" | split(\",\") | join(\"-\")"),
+        ["a-b-c"]
     );
+    assert_eq!(run_null("[{n:3},{n:1},{n:2}] | min_by(.n) | .n"), ["1"]);
     assert_eq!(run_null("\"hello world\" | contains(\"world\")"), ["true"]);
     assert_eq!(
         run_null(r#"{a:{b:1}} | setpath(["a","b"]; 99) | getpath(["a","b"])"#),
@@ -150,7 +153,10 @@ fn env_bindings_thread_through() {
     let env = mdqy::Env::default()
         .with("greet", Value::from("hi"))
         .with("name", Value::from("world"));
-    let out: Vec<_> = q.run_with_env(Value::Null, env).map(Result::unwrap).collect();
+    let out: Vec<_> = q
+        .run_with_env(Value::Null, env)
+        .map(Result::unwrap)
+        .collect();
     assert_eq!(render(&out[0]), "hi world");
 }
 
@@ -248,7 +254,10 @@ fn format_filters() {
     assert_eq!(run_null(r#""a b & c" | @uri"#), "a%20b%20%26%20c");
     assert_eq!(run_null(r#"["Ada","Bo"] | @csv"#), r#""Ada","Bo""#);
     assert_eq!(run_null(r#"["a","b"] | @tsv"#), "a\tb");
-    assert_eq!(run_null(r#"["one two","three"] | @sh"#), "'one two' 'three'");
+    assert_eq!(
+        run_null(r#"["one two","three"] | @sh"#),
+        "'one two' 'three'"
+    );
     assert_eq!(run_null(r#""<b>hi</b>" | @html"#), "&lt;b&gt;hi&lt;/b&gt;");
     assert_eq!(run_null(r"{x: 1} | @json"), r#"{"x":1}"#);
 }

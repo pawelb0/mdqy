@@ -130,7 +130,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
                     message: format!("too many `#` (max 6), got at least {}", count + 1),
                 });
             }
-            out.push(Spanned { tok: Tok::Hash(count), offset: start });
+            out.push(Spanned {
+                tok: Tok::Hash(count),
+                offset: start,
+            });
             continue;
         }
 
@@ -157,9 +160,15 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
         if c == b'@' {
             i = scan_ident(bytes, i + 1);
             if i == start + 1 {
-                return Err(CompileError::Lex { offset: start, message: "bare `@` with no identifier".into() });
+                return Err(CompileError::Lex {
+                    offset: start,
+                    message: "bare `@` with no identifier".into(),
+                });
             }
-            out.push(Spanned { tok: Tok::Ident(&source[start..i]), offset: start });
+            out.push(Spanned {
+                tok: Tok::Ident(&source[start..i]),
+                offset: start,
+            });
             continue;
         }
 
@@ -169,22 +178,34 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
             let id_start = i;
             i = scan_ident(bytes, i);
             if id_start == i {
-                return Err(CompileError::Lex { offset: start, message: "bare `$` with no identifier".into() });
+                return Err(CompileError::Lex {
+                    offset: start,
+                    message: "bare `$` with no identifier".into(),
+                });
             }
-            out.push(Spanned { tok: Tok::DollarIdent(&source[id_start..i]), offset: start });
+            out.push(Spanned {
+                tok: Tok::DollarIdent(&source[id_start..i]),
+                offset: start,
+            });
             continue;
         }
 
         if c == b'"' {
             let (value, end) = lex_string(source, i)?;
-            out.push(Spanned { tok: Tok::Str(value), offset: start });
+            out.push(Spanned {
+                tok: Tok::Str(value),
+                offset: start,
+            });
             i = end;
             continue;
         }
 
         if c.is_ascii_digit() {
             let (num, end) = lex_number(source, i)?;
-            out.push(Spanned { tok: Tok::Num(num), offset: start });
+            out.push(Spanned {
+                tok: Tok::Num(num),
+                offset: start,
+            });
             i = end;
             continue;
         }
@@ -204,7 +225,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Spanned<'_>>, CompileError> {
         });
     }
 
-    out.push(Spanned { tok: Tok::Eof, offset: source.len() });
+    out.push(Spanned {
+        tok: Tok::Eof,
+        offset: source.len(),
+    });
     Ok(out)
 }
 

@@ -111,14 +111,18 @@ mod tests {
         let mut root = build_tree_from_source(src);
         walk_mut(&mut root, |n| {
             if n.kind == NodeKind::Link {
-                n.attrs.insert(attr::HREF, Value::from("https://example.com"));
+                n.attrs
+                    .insert(attr::HREF, Value::from("https://example.com"));
                 n.dirty = true;
             }
         });
         let mut out = Vec::new();
         serialize(&mut out, src.as_bytes(), &root).unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("https://example.com") && text.starts_with("Hello "), "{text}");
+        assert!(
+            text.contains("https://example.com") && text.starts_with("Hello "),
+            "{text}"
+        );
     }
 
     fn walk_mut(node: &mut Node, f: impl Fn(&mut Node) + Copy) {

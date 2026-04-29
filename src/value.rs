@@ -46,17 +46,25 @@ impl Value {
 }
 
 impl From<i64> for Value {
-    fn from(n: i64) -> Self { Self::Number(n as f64) }
+    fn from(n: i64) -> Self {
+        Self::Number(n as f64)
+    }
 }
 
 impl From<String> for Value {
-    fn from(s: String) -> Self { Self::String(Arc::from(s)) }
+    fn from(s: String) -> Self {
+        Self::String(Arc::from(s))
+    }
 }
 
 impl From<&str> for Value {
-    fn from(s: &str) -> Self { Self::String(Arc::from(s)) }
+    fn from(s: &str) -> Self {
+        Self::String(Arc::from(s))
+    }
 }
 
 impl From<Node> for Value {
-    fn from(n: Node) -> Self { Self::Node(Arc::new(n)) }
+    fn from(n: Node) -> Self {
+        Self::Node(Arc::new(n))
+    }
 }

@@ -26,11 +26,18 @@ pub struct JsonOptions {
 impl JsonOptions {
     /// Compact, no spans. Used by `tostring`, `tojson`, and fallback
     /// serialisation in the md and tty emitters.
-    pub const COMPACT: Self = Self { compact: true, include_spans: false };
+    pub const COMPACT: Self = Self {
+        compact: true,
+        include_spans: false,
+    };
 }
 
 /// Emit one value as JSON, followed by a newline.
-pub fn emit<W: io::Write>(writer: &mut W, value: &Value, opts: JsonOptions) -> Result<(), RunError> {
+pub fn emit<W: io::Write>(
+    writer: &mut W,
+    value: &Value,
+    opts: JsonOptions,
+) -> Result<(), RunError> {
     let json = value_to_json(value, opts);
     let result = if opts.compact {
         serde_json::to_writer(&mut *writer, &json)
@@ -55,7 +62,10 @@ pub fn value_from_json(j: J) -> Value {
         J::String(s) => Value::from(s),
         J::Array(a) => Value::Array(Arc::new(a.into_iter().map(value_from_json).collect())),
         J::Object(m) => {
-            let converted = m.into_iter().map(|(k, v)| (k, value_from_json(v))).collect();
+            let converted = m
+                .into_iter()
+                .map(|(k, v)| (k, value_from_json(v)))
+                .collect();
             Value::Object(Arc::new(converted))
         }
     }
@@ -71,7 +81,9 @@ pub fn value_to_json(value: &Value, opts: JsonOptions) -> J {
         Value::String(s) => J::String(s.to_string()),
         Value::Array(arr) => J::Array(arr.iter().map(|v| value_to_json(v, opts)).collect()),
         Value::Object(map) => J::Object(
-            map.iter().map(|(k, v)| (k.clone(), value_to_json(v, opts))).collect(),
+            map.iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v, opts)))
+                .collect(),
         ),
         Value::Node(node) => node_to_json(node, opts),
     }
@@ -90,7 +102,12 @@ fn node_to_json(node: &Node, opts: JsonOptions) -> J {
         }
         obj.insert(
             "children".into(),
-            J::Array(node.children.iter().map(|v| value_to_json(v, opts)).collect()),
+            J::Array(
+                node.children
+                    .iter()
+                    .map(|v| value_to_json(v, opts))
+                    .collect(),
+            ),
         );
     }
     if opts.include_spans {

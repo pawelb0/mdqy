@@ -4,16 +4,35 @@ use std::sync::Arc;
 
 /// `==`, `!=`, `<`, `<=`, `>`, `>=`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CmpOp { Eq, Ne, Lt, Le, Gt, Ge }
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
 
 /// Arithmetic, boolean, and jq's `//` default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinOp { Add, Sub, Mul, Div, Mod, And, Or, Alt }
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    And,
+    Or,
+    Alt,
+}
 
 /// `=` and `|=`. Parser accepts both; the mutator only implements
 /// `|=` today and errors on `=`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssignOp { Set, Update }
+pub enum AssignOp {
+    Set,
+    Update,
+}
 
 #[derive(Debug, Clone)]
 pub enum Literal {
@@ -45,14 +64,24 @@ pub enum Expr {
     Bin(Box<Expr>, BinOp, Box<Expr>),
     Neg(Box<Expr>),
     Not(Box<Expr>),
-    If { branches: Vec<(Expr, Expr)>, else_branch: Option<Box<Expr>> },
+    If {
+        branches: Vec<(Expr, Expr)>,
+        else_branch: Option<Box<Expr>>,
+    },
     Var(Arc<str>),
-    Call { name: Arc<str>, args: Vec<Expr> },
+    Call {
+        name: Arc<str>,
+        args: Vec<Expr>,
+    },
     Try(Box<Expr>),
     Assign(Box<Expr>, AssignOp, Box<Expr>),
     /// `expr as $x | rest`. Binds each output of `expr` to `$x`
     /// inside `rest`.
-    As { bind: Box<Expr>, name: Arc<str>, body: Box<Expr> },
+    As {
+        bind: Box<Expr>,
+        name: Arc<str>,
+        body: Box<Expr>,
+    },
     /// `reduce SRC as $x (INIT; UPDATE)`. Folds `SRC` into one value,
     /// starting at `INIT` and replacing the accumulator with each
     /// `UPDATE` output.

@@ -56,7 +56,11 @@ struct Parser<'t, 's> {
 
 impl<'t, 's> Parser<'t, 's> {
     fn new(toks: &'t [Spanned<'s>]) -> Self {
-        Self { toks, pos: 0, chain_var: 0 }
+        Self {
+            toks,
+            pos: 0,
+            chain_var: 0,
+        }
     }
 
     fn peek(&self) -> &Tok<'s> {
@@ -97,7 +101,9 @@ impl<'t, 's> Parser<'t, 's> {
             return self.parse_pipeline();
         }
         self.advance();
-        let Tok::Ident(name) = self.peek().clone() else { return self.err("name after `def`"); };
+        let Tok::Ident(name) = self.peek().clone() else {
+            return self.err("name after `def`");
+        };
         self.advance();
         let params = self.parse_def_params()?;
         self.expect(Tok::Colon, "`:`")?;
@@ -106,7 +112,12 @@ impl<'t, 's> Parser<'t, 's> {
         let body = self.parse_top()?;
         self.expect(Tok::Semicolon, "`;`")?;
         let rest = self.parse_top()?;
-        Ok(Expr::Def { name: Arc::from(name), params, body: Box::new(body), rest: Box::new(rest) })
+        Ok(Expr::Def {
+            name: Arc::from(name),
+            params,
+            body: Box::new(body),
+            rest: Box::new(rest),
+        })
     }
 
     /// Parse the optional `(p1; p2; ...)` after a def name.
@@ -117,10 +128,14 @@ impl<'t, 's> Parser<'t, 's> {
         self.advance();
         let mut params = Vec::new();
         while !matches!(self.peek(), Tok::RParen) {
-            let Tok::Ident(n) = self.peek().clone() else { return self.err("parameter name"); };
+            let Tok::Ident(n) = self.peek().clone() else {
+                return self.err("parameter name");
+            };
             self.advance();
             params.push(Arc::<str>::from(n));
-            if !matches!(self.peek(), Tok::Semicolon) { break; }
+            if !matches!(self.peek(), Tok::Semicolon) {
+                break;
+            }
             self.advance();
         }
         self.expect(Tok::RParen, "`)`")?;
@@ -139,7 +154,11 @@ impl<'t, 's> Parser<'t, 's> {
         self.parse_pipeline_with(Self::parse_alt, false)
     }
 
-    fn parse_pipeline_with(&mut self, next: fn(&mut Self) -> Result<Expr, CompileError>, allow_comma: bool) -> Result<Expr, CompileError> {
+    fn parse_pipeline_with(
+        &mut self,
+        next: fn(&mut Self) -> Result<Expr, CompileError>,
+        allow_comma: bool,
+    ) -> Result<Expr, CompileError> {
         let mut lhs = next(self)?;
         loop {
             match self.peek() {
@@ -157,11 +176,21 @@ impl<'t, 's> Parser<'t, 's> {
     /// Parse `bind as $name | body`. `bind` already consumed.
     fn parse_as_tail(&mut self, bind: Expr, allow_comma: bool) -> Result<Expr, CompileError> {
         self.advance();
-        let Tok::DollarIdent(name) = self.peek().clone() else { return self.err("`$name` after `as`"); };
+        let Tok::DollarIdent(name) = self.peek().clone() else {
+            return self.err("`$name` after `as`");
+        };
         self.advance();
         self.expect(Tok::Pipe, "`|` after `as $name`")?;
-        let body = if allow_comma { self.parse_comma()? } else { self.parse_alt()? };
-        Ok(Expr::As { bind: Box::new(bind), name: Arc::from(name), body: Box::new(body) })
+        let body = if allow_comma {
+            self.parse_comma()?
+        } else {
+            self.parse_alt()?
+        };
+        Ok(Expr::As {
+            bind: Box::new(bind),
+            name: Arc::from(name),
+            body: Box::new(body),
+        })
     }
 
     fn parse_comma(&mut self) -> Result<Expr, CompileError> {
@@ -200,11 +229,15 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     fn parse_or(&mut self) -> Result<Expr, CompileError> {
-        self.left_assoc_bin(Self::parse_and, |t| matches!(t, Tok::KwOr).then_some(BinOp::Or))
+        self.left_assoc_bin(Self::parse_and, |t| {
+            matches!(t, Tok::KwOr).then_some(BinOp::Or)
+        })
     }
 
     fn parse_and(&mut self) -> Result<Expr, CompileError> {
-        self.left_assoc_bin(Self::parse_cmp, |t| matches!(t, Tok::KwAnd).then_some(BinOp::And))
+        self.left_assoc_bin(Self::parse_cmp, |t| {
+            matches!(t, Tok::KwAnd).then_some(BinOp::And)
+        })
     }
 
     fn parse_cmp(&mut self) -> Result<Expr, CompileError> {
@@ -261,10 +294,7 @@ impl<'t, 's> Parser<'t, 's> {
                     match self.peek().clone() {
                         Tok::Ident(name) if self.peek_offset() == dot_off + 1 => {
                             self.advance();
-                            lhs = Expr::Pipe(
-                                Box::new(lhs),
-                                Box::new(Expr::Field(Arc::from(name))),
-                            );
+                            lhs = Expr::Pipe(Box::new(lhs), Box::new(Expr::Field(Arc::from(name))));
                         }
                         Tok::LBracket if self.peek_offset() == dot_off + 1 => {
                             lhs = self.parse_bracket_access(lhs)?;
@@ -388,10 +418,7 @@ impl<'t, 's> Parser<'t, 's> {
                 Some(Box::new(self.parse_pipeline()?))
             };
             self.expect_rbracket()?;
-            return Ok(Expr::Pipe(
-                Box::new(lhs),
-                Box::new(Expr::Slice(None, end)),
-            ));
+            return Ok(Expr::Pipe(Box::new(lhs), Box::new(Expr::Slice(None, end))));
         }
 
         let first = self.parse_pipeline()?;
@@ -409,7 +436,10 @@ impl<'t, 's> Parser<'t, 's> {
             ));
         }
         self.expect_rbracket()?;
-        Ok(Expr::Pipe(Box::new(lhs), Box::new(Expr::Index(Box::new(first)))))
+        Ok(Expr::Pipe(
+            Box::new(lhs),
+            Box::new(Expr::Index(Box::new(first))),
+        ))
     }
 
     /// Consume `( expr )`. `label` shows up in the `expected (` error.
@@ -515,7 +545,10 @@ impl<'t, 's> Parser<'t, 's> {
                 } else {
                     Vec::new()
                 };
-                Ok(Expr::Call { name: Arc::from(name), args })
+                Ok(Expr::Call {
+                    name: Arc::from(name),
+                    args,
+                })
             }
             Tok::KwIf => self.parse_if(),
             Tok::Hash(level) => {
@@ -614,7 +647,10 @@ impl<'t, 's> Parser<'t, 's> {
             })
             .transpose()?;
         self.expect(Tok::KwEnd, "`end`")?;
-        Ok(Expr::If { branches, else_branch })
+        Ok(Expr::If {
+            branches,
+            else_branch,
+        })
     }
 
     /// Parse `cond then branch`. Used once for `if` and N times for `elif`.
@@ -675,7 +711,10 @@ impl<'t, 's> Parser<'t, 's> {
 
     /// Shared head: `SRC as $x ( P1; P2; ... )`. Returns the source,
     /// variable name, and `n_parts` parenthesised sub-expressions.
-    fn parse_fold_head(&mut self, n_parts: usize) -> Result<(Expr, Arc<str>, Vec<Expr>), CompileError> {
+    fn parse_fold_head(
+        &mut self,
+        n_parts: usize,
+    ) -> Result<(Expr, Arc<str>, Vec<Expr>), CompileError> {
         let source = self.parse_alt()?;
         let var = self.expect_as_var()?;
         self.expect(Tok::LParen, "`(`")?;
@@ -693,7 +732,9 @@ impl<'t, 's> Parser<'t, 's> {
     /// Expect `as $name` and return the name.
     fn expect_as_var(&mut self) -> Result<Arc<str>, CompileError> {
         self.expect(Tok::KwAs, "`as`")?;
-        let Tok::DollarIdent(n) = self.peek().clone() else { return self.err("`$name`"); };
+        let Tok::DollarIdent(n) = self.peek().clone() else {
+            return self.err("`$name`");
+        };
         self.advance();
         Ok(Arc::from(n))
     }
@@ -720,10 +761,23 @@ fn looks_like_selector_start(tok: &Tok<'_>) -> bool {
         tok,
         Tok::Hash(_)
             | Tok::Ident(
-                "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                | "headings" | "paragraphs" | "codeblocks" | "code"
-                | "links" | "images" | "items" | "lists" | "tables"
-                | "blockquotes" | "footnotes" | "sections"
+                "h1" | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+                    | "headings"
+                    | "paragraphs"
+                    | "codeblocks"
+                    | "code"
+                    | "links"
+                    | "images"
+                    | "items"
+                    | "lists"
+                    | "tables"
+                    | "blockquotes"
+                    | "footnotes"
+                    | "sections"
             )
     )
 }
@@ -777,12 +831,11 @@ fn build_string_literal(raw: &str) -> Result<Expr, CompileError> {
                 parts.push(lit_str(&raw[literal_start..i]));
             }
             let expr_start = i + 2;
-            let close = find_matching_paren(bytes, expr_start).ok_or_else(|| {
-                CompileError::Lex {
+            let close =
+                find_matching_paren(bytes, expr_start).ok_or_else(|| CompileError::Lex {
                     offset: 0,
                     message: "unterminated `\\(` in string literal".into(),
-                }
-            })?;
+                })?;
             let inner = &raw[expr_start..close];
             let toks = crate::lex::tokenize(inner)?;
             let inner_expr = parse(&toks)?;

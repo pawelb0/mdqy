@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "mdqy"
-version = "0.1.0"
+version = "0.1.1-rc.2"
 dependencies = [
  "anyhow",
  "assert_cmd",

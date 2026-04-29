@@ -125,7 +125,10 @@ pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
         Expr::Bin(l, op, r) => bin_stream(l, *op, r, input, env),
         Expr::Neg(x) => Box::new(eval(x, input, env).map(|r| r.and_then(neg))),
         Expr::Not(x) => Box::new(eval(x, input, env).map(|r| r.map(|v| Value::Bool(!v.truthy())))),
-        Expr::If { branches, else_branch } => if_stream(branches, else_branch.as_deref(), input, env),
+        Expr::If {
+            branches,
+            else_branch,
+        } => if_stream(branches, else_branch.as_deref(), input, env),
         Expr::Var(name) => match env.lookup(name) {
             Some(v) => once(Ok(v.clone())),
             None => once(Err(RunError::Other(format!("${name} is not defined")))),
@@ -145,13 +148,33 @@ pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
                 }
             }))
         }
-        Expr::Reduce { source, var, init, update } => {
-            reduce_fold(source, var, init, update, None, input, env)
-        }
-        Expr::Foreach { source, var, init, update, extract } => {
-            reduce_fold(source, var, init, update, Some(extract.as_ref()), input, env)
-        }
-        Expr::Def { name, params, body, rest } => {
+        Expr::Reduce {
+            source,
+            var,
+            init,
+            update,
+        } => reduce_fold(source, var, init, update, None, input, env),
+        Expr::Foreach {
+            source,
+            var,
+            init,
+            update,
+            extract,
+        } => reduce_fold(
+            source,
+            var,
+            init,
+            update,
+            Some(extract.as_ref()),
+            input,
+            env,
+        ),
+        Expr::Def {
+            name,
+            params,
+            body,
+            rest,
+        } => {
             let f = Arc::new(UserFn {
                 params: params.clone(),
                 body: (**body).clone(),
@@ -204,8 +227,11 @@ fn node_field(n: &Node, name: &str) -> Value {
         "children" => Value::Array(Arc::new(n.children.clone())),
         "text" => Value::from(plain_text(&n.children)),
         "attrs" => {
-            let m: BTreeMap<String, Value> =
-                n.attrs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect();
+            let m: BTreeMap<String, Value> = n
+                .attrs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), v.clone()))
+                .collect();
             Value::Object(Arc::new(m))
         }
         _ => n
@@ -228,7 +254,9 @@ fn index(input: &Value, idx: &Value) -> Result<Value, RunError> {
         (Value::Null, _) => Ok(Value::Null),
         (Value::Array(a), Value::Number(n)) => Ok(at(a, *n)),
         (Value::Node(n), Value::Number(x)) => Ok(at(&n.children, *x)),
-        (Value::Object(m), Value::String(s)) => Ok(m.get(s.as_ref()).cloned().unwrap_or(Value::Null)),
+        (Value::Object(m), Value::String(s)) => {
+            Ok(m.get(s.as_ref()).cloned().unwrap_or(Value::Null))
+        }
         (Value::Node(n), Value::String(s)) => Ok(node_field(n, s)),
         (v, i) => Err(RunError::Type {
             expected: format!("index compatible with {}", v.type_name()),
@@ -262,9 +290,11 @@ fn slice(input: &Value, lo: Option<i64>, hi: Option<i64>) -> Result<Value, RunEr
     };
     let start = clamp(lo.unwrap_or(0));
     let end = clamp(hi.unwrap_or(len));
-    Ok(Value::Array(Arc::new(
-        if start <= end { arr[start..end].to_vec() } else { Vec::new() },
-    )))
+    Ok(Value::Array(Arc::new(if start <= end {
+        arr[start..end].to_vec()
+    } else {
+        Vec::new()
+    })))
 }
 
 fn iterate(input: Value) -> Stream {
@@ -303,19 +333,23 @@ fn eval_int(expr: Option<&Expr>, input: &Value, env: &Env) -> Result<Option<i64>
 /// Comparison: evaluate both sides, compare, emit a bool. No
 /// short-circuit.
 fn cmp_stream(l: &Expr, op: CmpOp, r: &Expr, input: Value, env: &Env) -> Stream {
-    cross(l, r, input, env, move |lv, rv| Ok(Value::Bool(match op {
-        CmpOp::Eq => value_cmp(&lv, &rv).is_eq(),
-        CmpOp::Ne => !value_cmp(&lv, &rv).is_eq(),
-        CmpOp::Lt => value_cmp(&lv, &rv).is_lt(),
-        CmpOp::Le => value_cmp(&lv, &rv).is_le(),
-        CmpOp::Gt => value_cmp(&lv, &rv).is_gt(),
-        CmpOp::Ge => value_cmp(&lv, &rv).is_ge(),
-    })))
+    cross(l, r, input, env, move |lv, rv| {
+        Ok(Value::Bool(match op {
+            CmpOp::Eq => value_cmp(&lv, &rv).is_eq(),
+            CmpOp::Ne => !value_cmp(&lv, &rv).is_eq(),
+            CmpOp::Lt => value_cmp(&lv, &rv).is_lt(),
+            CmpOp::Le => value_cmp(&lv, &rv).is_le(),
+            CmpOp::Gt => value_cmp(&lv, &rv).is_gt(),
+            CmpOp::Ge => value_cmp(&lv, &rv).is_ge(),
+        }))
+    })
 }
 
 /// Cross-product of two streams, combined via `f`.
 fn cross<F>(l: &Expr, r: &Expr, input: Value, env: &Env, f: F) -> Stream
-where F: Fn(Value, Value) -> Result<Value, RunError> + Clone + 'static {
+where
+    F: Fn(Value, Value) -> Result<Value, RunError> + Clone + 'static,
+{
     let env = env.clone();
     let r = r.clone();
     let outer = input.clone();
@@ -323,7 +357,8 @@ where F: Fn(Value, Value) -> Result<Value, RunError> + Clone + 'static {
         Err(e) => once(Err(e)),
         Ok(lv) => {
             let (env, outer, f) = (env.clone(), outer.clone(), f.clone());
-            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| f(lv.clone(), rv)))) as Stream
+            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| f(lv.clone(), rv))))
+                as Stream
         }
     }))
 }
@@ -370,7 +405,8 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
                 return once(Ok(v));
             }
             let (env, outer) = (env.clone(), outer.clone());
-            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| apply_bin(&lv, op, &rv)))) as Stream
+            Box::new(eval(&r, outer, &env).map(move |y| y.and_then(|rv| apply_bin(&lv, op, &rv))))
+                as Stream
         }
     }))
 }
@@ -435,7 +471,12 @@ fn neg(v: Value) -> Result<Value, RunError> {
 
 // --- control flow -----------------------------------------------------------
 
-fn if_stream(branches: &[(Expr, Expr)], else_branch: Option<&Expr>, input: Value, env: &Env) -> Stream {
+fn if_stream(
+    branches: &[(Expr, Expr)],
+    else_branch: Option<&Expr>,
+    input: Value,
+    env: &Env,
+) -> Stream {
     for (cond, then_branch) in branches {
         match eval(cond, input.clone(), env).next() {
             Some(Ok(v)) if v.truthy() => return eval(then_branch, input, env),
@@ -536,7 +577,10 @@ fn reduce_fold(
     env: &Env,
 ) -> Stream {
     let first_or_null = |expr, val, env: &Env| -> Result<Value, RunError> {
-        eval(expr, val, env).next().transpose().map(|o| o.unwrap_or(Value::Null))
+        eval(expr, val, env)
+            .next()
+            .transpose()
+            .map(|o| o.unwrap_or(Value::Null))
     };
     let items: Vec<Value> = match eval(source, input.clone(), env).collect::<Result<_, _>>() {
         Ok(v) => v,

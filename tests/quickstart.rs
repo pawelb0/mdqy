@@ -26,7 +26,13 @@ fn copy_guide(dir: &Path) -> std::path::PathBuf {
 
 #[test]
 fn identity_byte_exact_roundtrip() {
-    let out = mdqy().args([".", GUIDE]).assert().success().get_output().stdout.clone();
+    let out = mdqy()
+        .args([".", GUIDE])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
     assert_eq!(out, fs::read(GUIDE).unwrap());
 }
 
@@ -150,7 +156,10 @@ fn combinator_scopes_codeblocks_to_install() {
 #[test]
 fn nested_combinator_reaches_query_examples() {
     mdqy()
-        .args([r#"# Usage > ## "Query examples" > codeblocks:first | .literal"#, GUIDE])
+        .args([
+            r#"# Usage > ## "Query examples" > codeblocks:first | .literal"#,
+            GUIDE,
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("fn first"))
@@ -185,7 +194,14 @@ fn array_ctor_wraps_stream() {
     let texts: Vec<&str> = arr.iter().map(|v| v.as_str().unwrap()).collect();
     assert_eq!(
         texts,
-        vec!["Guide", "Install", "Usage", "Query examples", "Output format", "Notes"]
+        vec![
+            "Guide",
+            "Install",
+            "Usage",
+            "Query examples",
+            "Output format",
+            "Notes"
+        ]
     );
 }
 
@@ -341,7 +357,10 @@ fn walk_bumps_heading_levels() {
         .success();
     let after = fs::read_to_string(&target).unwrap();
     assert!(after.contains("## Guide"), "H1 became H2 missing: {after}");
-    assert!(after.contains("### Install"), "H2 became H3 missing: {after}");
+    assert!(
+        after.contains("### Install"),
+        "H2 became H3 missing: {after}"
+    );
     assert!(
         !after.lines().any(|l| l.starts_with("# Guide")),
         "stale H1 left: {after}"

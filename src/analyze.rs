@@ -68,13 +68,21 @@ pub fn plan(expr: &Expr) -> Option<StreamPlan> {
                 return None;
             }
             let emit = emit_for(kind, &as_field(a)?)?;
-            return Some(StreamPlan { kind, level_eq: Some(constraint), emit });
+            return Some(StreamPlan {
+                kind,
+                level_eq: Some(constraint),
+                emit,
+            });
         }
         _ => return None,
     };
     let (kind, level_eq) = kind_source(kind_stage)?;
     let emit = emit_for(kind, &as_field(attr_stage)?)?;
-    Some(StreamPlan { kind, level_eq, emit })
+    Some(StreamPlan {
+        kind,
+        level_eq,
+        emit,
+    })
 }
 
 /// `true` if `expr` (or anything inside it) would mutate the tree.
@@ -93,18 +101,37 @@ pub fn has_mutation(expr: &Expr) -> bool {
         Expr::Neg(x) | Expr::Not(x) | Expr::Try(x) | Expr::ArrayCtor(x) | Expr::Index(x) => {
             has_mutation(x)
         }
-        Expr::Slice(a, b) => [a, b].iter().any(|x| x.as_deref().is_some_and(has_mutation)),
-        Expr::If { branches, else_branch } => {
-            branches.iter().any(|(c, t)| has_mutation(c) || has_mutation(t))
+        Expr::Slice(a, b) => [a, b]
+            .iter()
+            .any(|x| x.as_deref().is_some_and(has_mutation)),
+        Expr::If {
+            branches,
+            else_branch,
+        } => {
+            branches
+                .iter()
+                .any(|(c, t)| has_mutation(c) || has_mutation(t))
                 || else_branch.as_deref().is_some_and(has_mutation)
         }
         Expr::As { bind, body, .. } => has_mutation(bind) || has_mutation(body),
         Expr::ObjectCtor(entries) => entries.iter().any(|(_, v)| has_mutation(v)),
-        Expr::Reduce { source, init, update, .. } => {
-            has_mutation(source) || has_mutation(init) || has_mutation(update)
-        }
-        Expr::Foreach { source, init, update, extract, .. } => {
-            has_mutation(source) || has_mutation(init) || has_mutation(update) || has_mutation(extract)
+        Expr::Reduce {
+            source,
+            init,
+            update,
+            ..
+        } => has_mutation(source) || has_mutation(init) || has_mutation(update),
+        Expr::Foreach {
+            source,
+            init,
+            update,
+            extract,
+            ..
+        } => {
+            has_mutation(source)
+                || has_mutation(init)
+                || has_mutation(update)
+                || has_mutation(extract)
         }
         Expr::Def { body, rest, .. } => has_mutation(body) || has_mutation(rest),
         Expr::Identity
@@ -136,7 +163,9 @@ fn unfold<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
 /// Match a kind-producing call like `headings`, `codeblocks`, or
 /// `hN`. Returns `(kind, level)` where `level` is set only for `hN`.
 fn kind_source(expr: &Expr) -> Option<(NodeKind, Option<i64>)> {
-    let Expr::Call { name, args } = expr else { return None };
+    let Expr::Call { name, args } = expr else {
+        return None;
+    };
     if !args.is_empty() {
         return None;
     }
@@ -159,11 +188,15 @@ fn kind_source(expr: &Expr) -> Option<(NodeKind, Option<i64>)> {
 
 /// Match `select(.level == N)`.
 fn extract_level_select(expr: &Expr) -> Option<i64> {
-    let Expr::Call { name, args } = expr else { return None };
+    let Expr::Call { name, args } = expr else {
+        return None;
+    };
     if name.as_ref() != "select" || args.len() != 1 {
         return None;
     }
-    let Expr::Cmp(lhs, CmpOp::Eq, rhs) = &args[0] else { return None };
+    let Expr::Cmp(lhs, CmpOp::Eq, rhs) = &args[0] else {
+        return None;
+    };
     let (field, lit) = match (lhs.as_ref(), rhs.as_ref()) {
         (Expr::Field(f), Expr::Lit(Literal::Number(n)))
         | (Expr::Lit(Literal::Number(n)), Expr::Field(f)) => (f, *n),

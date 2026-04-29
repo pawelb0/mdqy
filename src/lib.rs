@@ -73,18 +73,28 @@ impl Query {
 
     /// Run with pre-populated variable bindings. Used by the CLI to
     /// carry `--arg` / `--argjson` into evaluation.
-    pub fn run_with_env(&self, input: Value, env: Env) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
+    pub fn run_with_env(
+        &self,
+        input: Value,
+        env: Env,
+    ) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
         eval::eval(&self.expr, input, &env)
     }
 
     /// Run over an already-built tree. Skips stream dispatch.
-    pub fn run_tree<'a>(&'a self, root: &'a Node) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'a> {
+    pub fn run_tree<'a>(
+        &'a self,
+        root: &'a Node,
+    ) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'a> {
         self.run_value(Value::from(root.clone()))
     }
 
     /// Run over any `Value`. Used by `--slurp`, which binds `.` to an
     /// array of root nodes.
-    pub fn run_value(&self, input: Value) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
+    pub fn run_value(
+        &self,
+        input: Value,
+    ) -> Box<dyn Iterator<Item = Result<Value, RunError>> + 'static> {
         self.run_with_env(input, Env::default())
     }
 

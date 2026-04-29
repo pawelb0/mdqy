@@ -123,7 +123,12 @@ fn workers_preserves_sequential_output() {
         .stdout
         .clone();
     let parallel = mdqy()
-        .args(["--workers", "4", "headings | .text", dir.path().to_str().unwrap()])
+        .args([
+            "--workers",
+            "4",
+            "headings | .text",
+            dir.path().to_str().unwrap(),
+        ])
         .assert()
         .success()
         .get_output()
