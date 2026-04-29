@@ -555,7 +555,7 @@ fn emit_value<W: io::Write>(
         }
         (OutputFormat::Text, Value::String(s)) => emit_line(out, s)?,
         (OutputFormat::Text, Value::Node(n)) => {
-            emit_line(out, &crate::events::plain_text(&n.children))?
+            emit_line(out, &crate::events::plain_text(&n.children))?;
         }
         (OutputFormat::Text, _) => emit_json(out, true)?,
         #[cfg(feature = "tty")]
