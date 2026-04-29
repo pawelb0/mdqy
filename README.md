@@ -3,6 +3,8 @@
 jq for markdown. Query markdown documents with a hybrid selector +
 jq-style DSL. Rewrite them in place. Pretty render to a terminal.
 
+![demo](examples/demo.gif)
+
 ## Install
 
 Homebrew (macOS, Linux):
