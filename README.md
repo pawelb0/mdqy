@@ -5,11 +5,38 @@ jq-style DSL. Rewrite them in place. Pretty render to a terminal.
 
 ## Install
 
-From source:
+Homebrew (macOS, Linux):
 
+```sh
+brew install pawelb0/tap/mdqy
 ```
-cargo install --path . --features tty
+
+Scoop (Windows):
+
+```sh
+scoop bucket add pawelb0 https://github.com/pawelb0/scoop-bucket
+scoop install pawelb0/mdqy
 ```
+
+Shell installer (Unix):
+
+```sh
+curl -sSfL https://github.com/pawelb0/mdqy/releases/latest/download/mdqy-installer.sh | sh
+```
+
+PowerShell installer (Windows):
+
+```powershell
+irm https://github.com/pawelb0/mdqy/releases/latest/download/mdqy-installer.ps1 | iex
+```
+
+From crates.io:
+
+```sh
+cargo install mdqy --features tty
+```
+
+Direct download: see https://github.com/pawelb0/mdqy/releases/latest. macOS direct downloads need `xattr -d com.apple.quarantine ./mdqy` once before first run.
 
 The `tty` feature pulls mdcat in for terminal rendering. Default
 builds emit markdown or JSON.
