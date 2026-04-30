@@ -320,11 +320,6 @@ fn reduce_with_assign_does_not_swallow() {
     }
 }
 
-/// `is_read_only` should return true unless the expression directly
-/// matches one of the patterns `transform_bytes` handles (`|=`, `del`,
-/// `walk`) reachable through `Pipe`/`Comma`. Assignments nested inside
-/// other constructors (object/array/if/reduce/foreach) target local
-/// values, not the document.
 #[test]
 fn is_read_only_matches_mutate_grammar() {
     assert!(!compile(".foo |= 1").is_read_only());
@@ -339,9 +334,7 @@ fn is_read_only_matches_mutate_grammar() {
     assert!(compile("[.foo |= 1]").is_read_only());
 }
 
-/// `as $x` should bind the immediately preceding term, not the whole
-/// pipeline. Regression: `2 | . as $x | select($x > 1)` used to greedy-
-/// absorb `2 | .` into the bind, leaving `outer` = the outer input.
+// Regression: `as` greedy-absorbed prior pipeline into the bind.
 #[test]
 fn as_binds_preceding_term_not_pipeline() {
     let run_null = null_strings;
@@ -350,7 +343,6 @@ fn as_binds_preceding_term_not_pipeline() {
     assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
 }
 
-/// `split("")` should split into single characters, matching jq.
 #[test]
 fn split_empty_yields_characters() {
     let run_null = null_json;
@@ -417,9 +409,7 @@ fn walk_runs_as_value_transformation() {
     assert_eq!(run_null("[1,2,3] | walk(.)"), ["[1,2,3]"]);
 }
 
-/// `a // b` should emit `b` once if `a` produces no non-null/non-false
-/// values. Regression: empty LHS produced no output at all; multiple
-/// null/false LHS values produced multiple `b` copies.
+// Regression: empty LHS yielded nothing; null/false LHS multiplied b.
 #[test]
 fn alt_operator_falls_back_on_empty() {
     let run_null = null_strings;
@@ -430,8 +420,7 @@ fn alt_operator_falls_back_on_empty() {
     assert_eq!(run_null("(1, null, 2) // 5"), ["1", "2"]);
 }
 
-/// `paths(f)` should return only paths whose value satisfies `f`.
-/// Regression: predicate was silently ignored, returning all paths.
+// Regression: predicate was ignored.
 #[test]
 fn paths_filter_applies_predicate() {
     let run_null = null_json;
@@ -453,9 +442,7 @@ fn comparisons_left_associate() {
     assert_eq!(run_null("3 > 2 != false"), "true");
 }
 
-/// `any(f)` and `all(f)` should evaluate `f` per element and reduce
-/// with OR/AND. Regression: predicate was silently ignored, leaving
-/// truthy reduction of the raw items.
+// Regression: predicate was ignored, fell back to truthy reduction.
 #[test]
 fn any_all_apply_predicate() {
     let run_null = null_first;
@@ -478,8 +465,6 @@ fn string_slice_clamps_by_codepoint() {
     assert_eq!(run_null(r#""héllo" | .[0:2]"#), ["hé"]);
 }
 
-/// `{k: stream}` should fan out across the value stream, producing
-/// one object per output. jq spec: `{a: (1,2,3)}` yields 3 objects.
 #[test]
 fn object_ctor_fans_out_value_stream() {
     let run_null = null_json;
@@ -498,7 +483,7 @@ fn object_ctor_fans_out_value_stream() {
     );
 }
 
-/// `as $x` body should extend through subsequent pipes, matching jq.
+/// `as $x` body extends through subsequent pipes.
 /// `EXPR as $x | a | b | c` reads as `EXPR as $x | (a | b | c)` so
 /// `$x` stays in scope across the whole rhs.
 #[test]
