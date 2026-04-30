@@ -59,7 +59,6 @@ fn stress_strings(expr: &str) -> Vec<String> {
         .collect()
 }
 
-/// Table-driven smoke test: expression -> expected stringified results.
 #[test]
 fn query_cases() {
     let cases: &[(&str, &[&str])] = &[
@@ -89,7 +88,6 @@ fn query_cases() {
     }
 }
 
-/// Object construction returns the right type + shape.
 #[test]
 fn object_ctor_shape() {
     let out = run("headings | {level: .level, text: .text}");
@@ -101,12 +99,8 @@ fn object_ctor_shape() {
     assert!(matches!(map.get("text"), Some(Value::String(s)) if s.as_ref() == "Tiny"));
 }
 
-/// One row per transformation case.
-/// `(source, expression, must_contain, must_not_contain)`.
 type MutationCase<'a> = (&'a [u8], &'a str, &'a [&'a str], &'a [&'a str]);
 
-/// Run `transform_bytes` on each case and check what's in and what's
-/// out of the resulting bytes.
 #[test]
 fn mutation_cases() {
     let cases: &[MutationCase] = &[
@@ -147,9 +141,6 @@ fn mutation_cases() {
     }
 }
 
-/// Builtins added after the initial set. Each row is a query that
-/// should compile and yield the listed stringified outputs when fed
-/// `null` via `--null-input` semantics.
 #[test]
 fn extra_builtins() {
     let run_null = null_strings;
@@ -168,7 +159,6 @@ fn extra_builtins() {
     );
 }
 
-/// `$foo` resolves through `Env` when the caller pre-populates it.
 #[test]
 fn env_bindings_thread_through() {
     let q = compile("$greet + \" \" + $name");
@@ -182,7 +172,6 @@ fn env_bindings_thread_through() {
     assert_eq!(render(&out[0]), "hi world");
 }
 
-/// `def`, `reduce`, `foreach`, and `as $x` all compile and run.
 #[test]
 fn control_constructs() {
     let run_null = null_first;
@@ -197,7 +186,6 @@ fn control_constructs() {
     assert_eq!(run_null("def add(a; b): a + b; 0 | add(10; 20)"), "30");
 }
 
-/// `rows`, `cells`, `headers` cover table projection.
 #[test]
 fn table_builtins_project_rows_and_cells() {
     let src = std::fs::read_to_string("tests/fixtures/table.md").unwrap();
@@ -228,7 +216,6 @@ fn table_builtins_project_rows_and_cells() {
     assert_eq!(cells[11], "2024");
 }
 
-/// `"\(expr)"` interpolation.
 #[test]
 fn string_interpolation() {
     let run_null = null_first;
@@ -245,7 +232,6 @@ fn string_interpolation() {
     assert_eq!(headings, ["h1: Tiny", "h2: Second heading"]);
 }
 
-/// `@format` filters.
 #[test]
 fn format_filters() {
     let run_null = null_first;
@@ -260,7 +246,6 @@ fn format_filters() {
     assert_eq!(run_null(r"{x: 1} | @json"), r#"{"x":1}"#);
 }
 
-/// `error(msg)` raises a runtime error; `?` swallows it to `empty`.
 #[test]
 fn error_builtin_raises_and_catches() {
     let raised = compile(r#"error("boom")"#)
@@ -278,8 +263,6 @@ fn error_builtin_raises_and_catches() {
     );
 }
 
-/// YAML + TOML frontmatter parse into the root `frontmatter` attr
-/// and are reachable via the builtin.
 #[test]
 fn frontmatter_parses() {
     let yaml = "---\ntitle: Hi\ncount: 3\n---\n\n# Body\n";
@@ -299,7 +282,6 @@ fn frontmatter_parses() {
     assert_eq!(out, ["3"]);
 }
 
-/// `walk(f)` with `|=` inside `f` mutates attrs on matching nodes.
 #[test]
 fn walk_mutation_bumps_heading_levels() {
     let src = b"# one\n\n## two\n";
@@ -311,7 +293,6 @@ fn walk_mutation_bumps_heading_levels() {
     assert!(text.contains("### two"), "{text}");
 }
 
-/// `node(obj)` constructs a fresh Node from a shape object.
 #[test]
 fn node_constructor_round_trips_kind() {
     let q = compile("node({kind:\"heading\", level:4}) | .kind");
@@ -392,9 +373,6 @@ fn assign_through_recurse_and_select() {
     );
 }
 
-/// `|=` updates the value at each resolved path. Path-shape covers
-/// Identity, Field, Index, Iterate, Pipe, Comma. Multi-output paths
-/// apply left-to-right.
 #[test]
 fn assign_update_in_eval() {
     let run_null = null_json;
@@ -411,8 +389,6 @@ fn assign_update_in_eval() {
     );
 }
 
-/// `=` evaluates rhs against the original input (not the path's
-/// current value).
 #[test]
 fn assign_set_in_eval() {
     let run_null = null_json;
@@ -420,7 +396,6 @@ fn assign_set_in_eval() {
     assert_eq!(run_null("{} | .a.b = 1"), [r#"{"a":{"b":1}}"#]);
 }
 
-/// `del(path)` removes the entries at each resolved path.
 #[test]
 fn del_in_eval() {
     let run_null = null_json;
@@ -430,9 +405,6 @@ fn del_in_eval() {
     assert_eq!(run_null("[10,20,30,40] | del(.[1], .[3])"), ["[10,30]"]);
 }
 
-/// `walk(f)` should run as a pure value transformation in eval.
-/// Recursive descent over Array/Object/Node/scalar; apply `f` at
-/// each value bottom-up.
 #[test]
 fn walk_runs_as_value_transformation() {
     let run_null = null_json;
@@ -473,8 +445,6 @@ fn paths_filter_applies_predicate() {
     );
 }
 
-/// Comparison operators chain left-to-right, matching jq.
-/// `1 < 2 == true` parses as `(1 < 2) == true` and is `true`.
 #[test]
 fn comparisons_left_associate() {
     let run_null = null_first;
@@ -498,7 +468,6 @@ fn any_all_apply_predicate() {
     assert_eq!(run_null("[true, false] | all"), "false");
 }
 
-/// String slicing should work like jq: clamp by Unicode codepoint.
 #[test]
 fn string_slice_clamps_by_codepoint() {
     let run_null = null_strings;
@@ -543,8 +512,6 @@ fn as_body_extends_through_pipes() {
     );
 }
 
-/// `not` works as a 0-ary postfix filter (`EXPR | not`) and as a
-/// prefix unary (`not EXPR`), matching jq.
 #[test]
 fn not_works_as_prefix_and_postfix() {
     let run_null = null_first;
@@ -554,8 +521,6 @@ fn not_works_as_prefix_and_postfix() {
     assert_eq!(run_null("not true"), "false");
 }
 
-/// `>` combinator scopes into the current heading's section and
-/// doesn't hijack the `>` comparison operator.
 #[test]
 fn selector_combinator_and_gt_both_work() {
     let src = "# Install\n\n## Linux\n\n```sh\napt\n```\n\n## Macos\n\n```sh\nbrew\n```\n";
@@ -576,7 +541,6 @@ fn selector_combinator_and_gt_both_work() {
     assert_eq!(out, ["true"]);
 }
 
-/// `# Title` sugar desugars to `section("Title")`.
 #[test]
 fn hash_selector_matches_section() {
     let out: Vec<_> = compile("# \"Second heading\" | .kind")
@@ -587,7 +551,6 @@ fn hash_selector_matches_section() {
     assert_eq!(out, ["section"]);
 }
 
-/// `sections` (no args) yields one Section per heading, body included.
 #[test]
 fn sections_yields_one_per_heading() {
     let kinds: Vec<_> = compile("sections | .kind")
@@ -605,7 +568,6 @@ fn sections_yields_one_per_heading() {
     assert_eq!(titles, ["Tiny", "Second heading"]);
 }
 
-/// `sections(N)` filters by heading level.
 #[test]
 fn sections_filters_by_level() {
     let h2: Vec<_> = compile("sections(2) | .children[0].text")
@@ -623,7 +585,6 @@ fn sections_filters_by_level() {
     assert_eq!(h3, ["0"]);
 }
 
-/// `.text` on a Section flattens heading and body together.
 #[test]
 fn sections_text_includes_body() {
     let src = "## Alpha\n\nbody one.\n\n## Beta\n\nbody two.\n";
@@ -655,7 +616,6 @@ fn sections_recurse_into_nested_headings() {
     assert_eq!(h3, ["Cc body"]);
 }
 
-/// jq-style level filter on the Section heading reads naturally.
 #[test]
 fn sections_level_filter_via_select() {
     let src = "# A\n\n## B\n\n## C\n";
