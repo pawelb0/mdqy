@@ -517,22 +517,17 @@ fn reduce_bool(
     }
 }
 
-/// `any` / `all`. Zero args: truthy reduction over the array.
-/// One arg: evaluate `f` per element and short-circuit on the first
-/// hit (any) or miss (all).
+/// `any` / `all`. Zero args: truthy reduction over the array. One
+/// arg: evaluate `f` per element. `any` short-circuits on the first
+/// truthy result, `all` on the first falsy. Empty input matches jq:
+/// `any` is `false`, `all` is `true`.
 fn any_or_all(args: &[Expr], input: Value, env: &Env, is_any: bool) -> Stream {
     if args.is_empty() {
-        let combine: fn(bool, bool) -> bool = if is_any {
-            |a, b| a || b
-        } else {
-            |a, b| a && b
-        };
+        let combine: fn(bool, bool) -> bool = if is_any { |a, b| a || b } else { |a, b| a && b };
         return one(reduce_bool(&input, combine, !is_any));
     }
     if args.len() != 1 {
-        return err(RunError::Other(
-            "any/all: expected 0 or 1 arguments".into(),
-        ));
+        return err(RunError::Other("any/all: expected 0 or 1 arguments".into()));
     }
     let items: Vec<Value> = match input {
         Value::Array(a) => (*a).clone(),
@@ -540,25 +535,16 @@ fn any_or_all(args: &[Expr], input: Value, env: &Env, is_any: bool) -> Stream {
         Value::Null => Vec::new(),
         other => return err(type_err("array or node", &other)),
     };
-    let mut acc = !is_any;
     for v in items {
         for r in eval::eval(&args[0], v, env) {
             match r {
-                Ok(x) => {
-                    let t = x.truthy();
-                    if is_any && t {
-                        return ok(Value::Bool(true));
-                    }
-                    if !is_any && !t {
-                        return ok(Value::Bool(false));
-                    }
-                    acc = if is_any { acc || t } else { acc && t };
-                }
+                Ok(x) if x.truthy() == is_any => return ok(Value::Bool(is_any)),
+                Ok(_) => {}
                 Err(e) => return err(e),
             }
         }
     }
-    ok(Value::Bool(acc))
+    ok(Value::Bool(!is_any))
 }
 
 fn reverse_of(input: Value) -> Result<Value, RunError> {
@@ -1213,17 +1199,19 @@ fn walk_call(args: &[Expr], input: Value, env: &Env) -> Stream {
 fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
     let inner = match &v {
         Value::Array(a) => {
-            let mut new_arr: Vec<Value> = Vec::with_capacity(a.len());
-            let mut changed = false;
-            for c in a.iter() {
-                let new_c = walk_value(c.clone(), f, env)?;
-                if !value_id_eq(&new_c, c) {
-                    changed = true;
-                }
-                new_arr.push(new_c);
-            }
+            let (out, changed) = walk_seq(a, f, env)?;
+            if changed { Value::Array(Arc::new(out)) } else { v.clone() }
+        }
+        Value::Node(n) => {
+            let (out, changed) = walk_seq(&n.children, f, env)?;
             if changed {
-                Value::Array(Arc::new(new_arr))
+                let mut new_node = (**n).clone();
+                new_node.children = out;
+                // Children changed; the original span no longer
+                // describes the right bytes. Dirty so the serialiser
+                // regenerates from events rather than copying source.
+                new_node.dirty = true;
+                Value::Node(Arc::new(new_node))
             } else {
                 v.clone()
             }
@@ -1238,33 +1226,7 @@ fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
                 }
                 new_map.insert(k.clone(), new_v);
             }
-            if changed {
-                Value::Object(Arc::new(new_map))
-            } else {
-                v.clone()
-            }
-        }
-        Value::Node(n) => {
-            let mut new_children: Vec<Value> = Vec::with_capacity(n.children.len());
-            let mut changed = false;
-            for c in &n.children {
-                let new_c = walk_value(c.clone(), f, env)?;
-                if !value_id_eq(&new_c, c) {
-                    changed = true;
-                }
-                new_children.push(new_c);
-            }
-            if changed {
-                let mut new_node = (**n).clone();
-                new_node.children = new_children;
-                // Children changed; the original span no longer
-                // describes the right bytes. Dirty so the serialiser
-                // regenerates from events rather than copying source.
-                new_node.dirty = true;
-                Value::Node(Arc::new(new_node))
-            } else {
-                v.clone()
-            }
+            if changed { Value::Object(Arc::new(new_map)) } else { v.clone() }
         }
         _ => v.clone(),
     };
@@ -1280,6 +1242,19 @@ fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
         }
     }
     Ok(result)
+}
+
+fn walk_seq(items: &[Value], f: &Expr, env: &Env) -> Result<(Vec<Value>, bool), RunError> {
+    let mut out = Vec::with_capacity(items.len());
+    let mut changed = false;
+    for c in items {
+        let new_c = walk_value(c.clone(), f, env)?;
+        if !value_id_eq(&new_c, c) {
+            changed = true;
+        }
+        out.push(new_c);
+    }
+    Ok((out, changed))
 }
 
 /// `del(path_expr)`. Resolves all paths and deletes them in

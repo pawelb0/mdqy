@@ -831,28 +831,21 @@ pub(crate) fn set_at_path(
         (Value::Array(a), Value::Number(num)) => {
             let mut new_arr = (*a).clone();
             let i = *num as i64;
-            let idx = if i < 0 {
-                (new_arr.len() as i64 + i).max(0)
-            } else {
-                i
-            } as usize;
-            while new_arr.len() <= idx {
-                new_arr.push(Value::Null);
+            let idx = if i < 0 { (new_arr.len() as i64 + i).max(0) } else { i } as usize;
+            if new_arr.len() <= idx {
+                new_arr.resize(idx + 1, Value::Null);
             }
-            let current = new_arr[idx].clone();
-            let new_val = set_at_path(current, tail, value)?;
-            new_arr[idx] = new_val;
+            new_arr[idx] = set_at_path(new_arr[idx].clone(), tail, value)?;
             Ok(Value::Array(Arc::new(new_arr)))
         }
-        (Value::Null, Value::String(k)) => {
-            let new_val = set_at_path(Value::Null, tail, value)?;
-            let mut m: BTreeMap<String, Value> = BTreeMap::new();
-            m.insert(k.to_string(), new_val);
-            Ok(Value::Object(Arc::new(m)))
-        }
-        (Value::Null, Value::Number(_)) => {
-            let new_val = set_at_path(Value::Null, tail, value)?;
-            Ok(Value::Array(Arc::new(vec![new_val])))
+        (Value::Null, step) => {
+            // Auto-create the container that matches the next step.
+            let empty = match step {
+                Value::String(_) => Value::Object(Arc::new(BTreeMap::new())),
+                Value::Number(_) => Value::Array(Arc::new(Vec::new())),
+                other => return Err(type_err("string or number path step", other)),
+            };
+            set_at_path(empty, path, value)
         }
         (other, _) => Err(type_err("object, array, or node", &other)),
     }
@@ -879,11 +872,9 @@ pub(crate) fn del_at_path(input: Value, path: &[Value]) -> Result<Value, RunErro
                 Ok(Value::Object(Arc::new(new_map)))
             }
             (Value::Array(a), Value::Number(num)) => {
-                let i = *num as i64;
-                let idx = if i < 0 { (a.len() as i64 + i).max(0) } else { i } as usize;
-                if idx >= a.len() {
+                let Some(idx) = neg_index(*num as i64, a.len()) else {
                     return Ok(Value::Array(a));
-                }
+                };
                 let mut new_arr = (*a).clone();
                 new_arr.remove(idx);
                 Ok(Value::Array(Arc::new(new_arr)))
