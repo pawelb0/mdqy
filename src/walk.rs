@@ -24,9 +24,7 @@ pub fn walk_inputs(
         return Box::new(std::iter::empty());
     }
 
-    // Split file args from directory args. Files go out verbatim;
-    // directories feed the `ignore::WalkBuilder`. Keeping them apart
-    // avoids paying the builder cost on file-only invocations.
+    // Files skip the WalkBuilder; only directories pay its cost.
     let mut direct_files: Vec<io::Result<PathBuf>> = Vec::new();
     let mut dirs: Vec<&Path> = Vec::new();
 

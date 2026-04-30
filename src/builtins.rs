@@ -1136,7 +1136,7 @@ fn heading_to_entry(node: Arc<Node>) -> Value {
 }
 
 /// Post-order rewrite. Untouched subtrees keep their Arc identity so
-/// the serialiser can copy clean spans verbatim.
+/// the serialiser can reuse clean spans.
 fn walk_call(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("walk/1: expected one argument".into()));

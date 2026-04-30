@@ -214,6 +214,3 @@ fn scalar_from_start(tag: &Tag<'_>, attr: &str) -> Option<Value> {
     }
 }
 
-// Contract: produce the same values as the tree evaluator for any
-// query `analyze::plan` accepts. Enforced by
-// `tests/queries.rs::stream_and_tree_agree`, not re-tested here.

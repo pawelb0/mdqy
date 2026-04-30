@@ -1,6 +1,5 @@
-//! Markdown serializer. Clean subtrees byte-copy from source; dirty
-//! ones go through `pulldown-cmark-to-cmark`; spanless roots
-//! regenerate child by child.
+//! Markdown serializer. Clean spans copy from source; dirty ones go
+//! through `pulldown-cmark-to-cmark`.
 
 use std::io;
 
