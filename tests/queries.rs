@@ -300,21 +300,19 @@ fn node_constructor_round_trips_kind() {
     assert_eq!(render(&out[0]), "heading");
 }
 
-/// `reduce` with an object-mutating update must not silently echo the
-/// document. Either compute the histogram or surface an error.
 #[test]
-fn reduce_with_assign_does_not_swallow() {
+fn reduce_with_assign_builds_histogram() {
     let q = compile(r#"reduce ("a","b","a") as $l ({}; .[$l] = (.[$l] // 0) + 1)"#);
-    let mut out = q.run_with_env(Value::Null, mdqy::Env::default());
-    let first = out.next().expect("at least one output");
-    match first {
-        Ok(Value::Object(m)) => {
-            assert!(matches!(m.get("a"), Some(Value::Number(n)) if (n - 2.0).abs() < 1e-9));
-            assert!(matches!(m.get("b"), Some(Value::Number(n)) if (n - 1.0).abs() < 1e-9));
-        }
-        Err(_) => {}
-        Ok(other) => panic!("expected histogram or error, got {other:?}"),
-    }
+    let out = q
+        .run_with_env(Value::Null, mdqy::Env::default())
+        .next()
+        .expect("at least one output")
+        .expect("no runtime error");
+    let Value::Object(m) = out else {
+        panic!("expected object, got {out:?}");
+    };
+    assert!(matches!(m.get("a"), Some(Value::Number(n)) if (n - 2.0).abs() < 1e-9));
+    assert!(matches!(m.get("b"), Some(Value::Number(n)) if (n - 1.0).abs() < 1e-9));
 }
 
 #[test]

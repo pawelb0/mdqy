@@ -745,17 +745,12 @@ tn_eq W_alt_chain   "5"     'null // null // 5'
 # `if/elif/else/end` chain.
 tn_eq W_if_elif     '"two"' 'if 1 == 0 then "one" elif 2 == 2 then "two" else "n" end'
 
-# def with overload by arity. Mdqy: same name with different arity.
-# May or may not resolve; pin the behaviour.
+# def overload by arity.
 tn_eq W_def_arity   "11"    'def f(g): g + 1; def f(g; h): g + h; f(5; 6)'
 
-# Nested defs. mdqy parses `def name:` as a top-level form only — a
-# nested `def` mid-pipeline isn't accepted by parse_top.
-tn_eq W_nested_def_BUG  "12"    'def outer(x): def inner(y): y * 2; inner(x); outer(6)'
+tn_eq W_nested_def  "12"    'def outer(x): def inner(y): y * 2; inner(x); outer(6)'
 
-# Recursive def: the body refers to itself. mdqy currently
-# stack-overflows trying to evaluate it.
-tn_eq W_recursive_def_BUG "120" 'def fact(n): if n < 2 then 1 else n * fact(n-1) end; fact(5)'
+tn_eq W_recursive_def "120" 'def fact(n): if n < 2 then 1 else n * fact(n-1) end; fact(5)'
 
 # Shadowed `as` binding.
 tn_eq W_shadow_as   "7"     '5 as $x | 7 as $x | $x'
