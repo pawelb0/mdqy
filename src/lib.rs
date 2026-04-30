@@ -31,8 +31,7 @@ pub use value::Value;
 
 use pulldown_cmark::Event;
 
-/// Compiled query. Lex, parse, and dispatch-mode selection happen in
-/// [`Query::compile`]; runners only walk the cached AST.
+/// Compiled query.
 #[derive(Debug, Clone)]
 pub struct Query {
     pub(crate) expr: expr::Expr,

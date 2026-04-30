@@ -1,10 +1,5 @@
-//! JSON output.
-//!
-//! A Node serialises to `{ "kind": ..., <attr>: ..., "text": ...,
-//! "children": [...] }`. Attrs sit at the top level (not nested) so a
-//! downstream `jq` pipe can write `.level`, `.href`, ... directly.
-//! `text` is the flattened plaintext of descendants; `children` is
-//! omitted when empty; `span` appears only under `include_spans`.
+//! JSON output. Node attrs sit at the top level alongside `kind`,
+//! `text`, `children` so downstream `jq` reads them directly.
 
 use std::io;
 

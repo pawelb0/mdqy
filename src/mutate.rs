@@ -1,6 +1,5 @@
-//! Markdown write path. Parses bytes, runs the query through eval,
-//! serialises the resulting tree. Byte-exact spans copy verbatim;
-//! dirty subtrees regenerate from events.
+//! Markdown write path. Eval mutates the tree; the serializer copies
+//! clean spans verbatim and regenerates dirty ones.
 
 use std::sync::Arc;
 

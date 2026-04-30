@@ -1,23 +1,5 @@
-//! Recursive-descent parser.
-//!
-//! Precedence, tightest to loosest:
-//! ```text
-//!     postfix   . [ ] ? call
-//!     unary     - not
-//!     mul       * / %
-//!     add       + -
-//!     cmp       == != < <= > >=
-//!     and
-//!     or
-//!     assign    = |=
-//!     alt       //
-//!     comma     ,
-//!     pipe      |
-//! ```
-//!
-//! Selector-shortcut pseudos (`:first`, `:nth(k)`, `:lang(x)`) are
-//! handled in `parse_postfix` and desugar to plain jq inline. No
-//! separate desugar pass.
+//! Recursive-descent parser. Selector pseudos desugar inline in
+//! `parse_postfix`.
 
 use std::sync::Arc;
 
