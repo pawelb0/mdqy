@@ -264,31 +264,14 @@ fn index(input: &Value, idx: &Value) -> Result<Value, RunError> {
 }
 
 fn at(arr: &[Value], n: f64) -> Value {
-    let len = arr.len() as i64;
-    let i = n as i64;
-    let idx = if i < 0 { len + i } else { i };
-    if (0..len).contains(&idx) {
-        arr[idx as usize].clone()
-    } else {
-        Value::Null
-    }
+    neg_index(n as i64, arr.len()).map_or(Value::Null, |i| arr[i].clone())
 }
 
 fn slice(input: &Value, lo: Option<i64>, hi: Option<i64>) -> Result<Value, RunError> {
     if let Value::String(s) = input {
         let chars: Vec<char> = s.chars().collect();
-        let len = chars.len() as i64;
-        let clamp = |x: i64| {
-            let a = if x < 0 { len + x } else { x };
-            a.clamp(0, len) as usize
-        };
-        let start = clamp(lo.unwrap_or(0));
-        let end = clamp(hi.unwrap_or(len));
-        let out: String = if start <= end {
-            chars[start..end].iter().collect()
-        } else {
-            String::new()
-        };
+        let (start, end) = slice_bounds(lo, hi, chars.len());
+        let out: String = chars.get(start..end).map(|c| c.iter().collect()).unwrap_or_default();
         return Ok(Value::from(out));
     }
     let arr: &[Value] = match input {
@@ -297,18 +280,21 @@ fn slice(input: &Value, lo: Option<i64>, hi: Option<i64>) -> Result<Value, RunEr
         Value::Null => return Ok(Value::Null),
         other => return Err(type_err("array, node, or string", other)),
     };
-    let len = arr.len() as i64;
+    let (start, end) = slice_bounds(lo, hi, arr.len());
+    let out = arr.get(start..end).map(<[Value]>::to_vec).unwrap_or_default();
+    Ok(Value::Array(Arc::new(out)))
+}
+
+/// Clamp `lo`/`hi` to `[0, len]`, with negative values measured from
+/// the end. Returns `(start, end)` ready for slicing; an inverted
+/// range yields empty output via `slice::get`.
+fn slice_bounds(lo: Option<i64>, hi: Option<i64>, len: usize) -> (usize, usize) {
+    let len_i = len as i64;
     let clamp = |x: i64| {
-        let a = if x < 0 { len + x } else { x };
-        a.clamp(0, len) as usize
+        let a = if x < 0 { len_i + x } else { x };
+        a.clamp(0, len_i) as usize
     };
-    let start = clamp(lo.unwrap_or(0));
-    let end = clamp(hi.unwrap_or(len));
-    Ok(Value::Array(Arc::new(if start <= end {
-        arr[start..end].to_vec()
-    } else {
-        Vec::new()
-    })))
+    (clamp(lo.unwrap_or(0)), clamp(hi.unwrap_or(len_i)))
 }
 
 fn iterate(input: Value) -> Stream {
