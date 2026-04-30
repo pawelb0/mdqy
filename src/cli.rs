@@ -29,115 +29,106 @@ pub struct Args {
     #[arg(required_unless_present = "from_file")]
     pub expr: Option<String>,
 
-    /// Input markdown files or directories.
+    /// Files or directories to read.
     pub paths: Vec<PathBuf>,
 
-    /// Start evaluation with `null` instead of reading input.
+    /// Start with `null` input.
     #[arg(short = 'n', long = "null-input")]
     pub null_input: bool,
 
-    /// Read input as a raw string rather than parsing as markdown.
+    /// Treat input as a raw string.
     #[arg(short = 'R', long = "raw-input")]
     pub raw_input: bool,
 
-    /// Collect every input document into a single array bound to `.`.
+    /// Bind every input document into a single array.
     #[arg(short = 's', long)]
     pub slurp: bool,
 
-    /// Concatenate event streams into one virtual document.
+    /// Stitch event streams into one document.
     #[arg(long, conflicts_with = "slurp")]
     pub merge: bool,
 
-    /// Run the query once per input file (default).
+    /// Run once per file (default).
     #[arg(long = "per-file", conflicts_with_all = ["slurp", "merge"])]
     pub per_file: bool,
 
-    /// Walk directories recursively (implied when any path is a directory).
     #[arg(short = 'r', long)]
     pub recursive: bool,
 
-    /// Follow symlinks during directory walk.
     #[arg(long)]
     pub follow: bool,
 
-    /// Include hidden files in the walk.
     #[arg(long)]
     pub hidden: bool,
 
-    /// Do not honor `.gitignore` or `.ignore` during the walk.
+    /// Do not honour `.gitignore` / `.ignore`.
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
 
-    /// Force reading from stdin even when PATHS are set.
+    /// Read stdin even when PATHS are set.
     #[arg(long)]
     pub stdin: bool,
 
-    /// Bind `$NAME` to a string value (jq-compatible).
+    /// Bind a string `$NAME`. Mirrors jq.
     #[arg(long = "arg", num_args = 2, value_names = ["NAME", "VALUE"])]
     pub arg: Vec<String>,
 
-    /// Bind `$NAME` to a JSON value (jq-compatible).
+    /// Bind a JSON `$NAME`. Mirrors jq.
     #[arg(long = "argjson", num_args = 2, value_names = ["NAME", "JSON"])]
     pub argjson: Vec<String>,
 
-    /// Output format. `auto` renders to TTY when stdout is a
-    /// terminal and the `tty` feature is compiled in; otherwise
-    /// emits markdown.
+    /// `auto` renders to TTY when stdout is a terminal and `tty` is
+    /// compiled in; otherwise emits markdown.
     #[arg(short = 'o', long, value_enum, default_value_t = OutputFormat::Auto)]
     pub output: OutputFormat,
 
-    /// Emit strings without JSON quoting.
+    /// Strings without JSON quoting.
     #[arg(long)]
     pub raw: bool,
 
-    /// Single-line JSON per result.
+    /// One-line JSON per result.
     #[arg(short = 'c', long)]
     pub compact: bool,
 
-    /// Tag each JSON result with its source path.
     #[arg(long = "with-path")]
     pub with_path: bool,
 
-    /// Include span information on every Node in JSON output.
+    /// Include byte spans on every Node in JSON.
     #[arg(long = "with-spans")]
     pub with_spans: bool,
 
-    /// Disable colour output.
     #[arg(long = "no-color")]
     pub no_color: bool,
 
-    /// Atomically overwrite each input file with the transform result.
+    /// Atomic in-place rewrite.
     #[arg(short = 'U', long = "in-place")]
     pub in_place: bool,
 
-    /// Print a unified diff instead of writing (implies --in-place).
+    /// Print a unified diff instead of writing.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 
-    /// Before an --in-place overwrite, copy `foo.md` to `foo.md.EXT`.
+    /// Copy `foo.md` to `foo.md.EXT` before -U.
     #[arg(long, value_name = "EXT")]
     pub backup: Option<String>,
 
-    /// Read expression from FILE instead of the positional argument.
+    /// Read expression from FILE.
     #[arg(short = 'f', long = "from-file", value_name = "FILE")]
     pub from_file: Option<PathBuf>,
 
-    /// Compile the expression and exit. No input is read.
+    /// Compile and exit; no input read.
     #[arg(short = 'p', long = "compile-only")]
     pub compile_only: bool,
 
-    /// Number of worker threads for per-file query dispatch. `0`
-    /// picks a thread per CPU. `1` (default) runs sequentially.
+    /// Worker threads for per-file dispatch. `0` = one per CPU.
     #[arg(long, default_value_t = 1)]
     pub workers: usize,
 
-    /// Re-run the query whenever the input file changes. Requires
-    /// the `watch` cargo feature and a single file path.
+    /// Re-run on file change. Requires the `watch` feature.
     #[arg(long)]
     pub watch: bool,
 
-    /// Print the dispatch mode (`stream` or `tree`) the compiler
-    /// picked and exit.
+    /// Print `stream` or `tree` and exit.
     #[arg(long = "explain-mode")]
     pub explain_mode: bool,
 }
@@ -584,9 +575,7 @@ fn resolve_format(requested: OutputFormat) -> OutputFormat {
 }
 
 fn apply_in_place(path: &Path, new_bytes: &[u8], backup: Option<&str>) -> anyhow::Result<()> {
-    // Resolve symlinks so `tempfile::persist`'s rename writes the
-    // target file instead of clobbering the symlink with a regular
-    // file.
+    // Canonicalize so persist() rewrites the target, not the symlink.
     let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Some(ext) = backup {
         let backup_path = match target.extension() {
