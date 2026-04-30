@@ -1,5 +1,3 @@
-//! Value type that flows through expressions.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

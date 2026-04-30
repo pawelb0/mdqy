@@ -1,5 +1,3 @@
-//! Node tree: kinds, spans, attribute keys.
-
 use std::collections::BTreeMap;
 
 use crate::value::Value;

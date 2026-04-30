@@ -1,5 +1,3 @@
-//! Expression AST. Parser builds it, evaluator and stream runner walk it.
-
 use std::sync::Arc;
 
 /// `==`, `!=`, `<`, `<=`, `>`, `>=`.

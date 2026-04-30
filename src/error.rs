@@ -1,5 +1,3 @@
-//! Error types for compile and run.
-
 use thiserror::Error;
 
 /// Something went wrong turning source text into a [`Query`](crate::Query).

@@ -1,5 +1,3 @@
-//! How the CLI combines multiple input files before running a query.
-
 /// Strategy for multi-file input.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Aggregation {
