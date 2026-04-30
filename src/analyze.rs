@@ -85,49 +85,20 @@ pub fn plan(expr: &Expr) -> Option<StreamPlan> {
     })
 }
 
-/// `true` if `expr` (or anything inside it) would mutate the tree.
+/// `true` if `expr` matches the grammar `mutate::transform_bytes`
+/// actually handles: `Assign`, `walk(...)`, `del(...)`, reachable
+/// through `Pipe`/`Comma`. Anything else (assignments inside object
+/// constructors, `if`-branches, `reduce`/`foreach` updates, function
+/// args, etc.) targets local values and runs through eval instead.
 /// Used by [`Query::is_read_only`](crate::Query::is_read_only) and by
 /// the CLI to pick between query and transform paths.
 #[must_use]
 pub fn has_mutation(expr: &Expr) -> bool {
     match expr {
         Expr::Assign(..) => true,
-        Expr::Call { name, args } => {
-            matches!(name.as_ref(), "walk" | "del") || args.iter().any(has_mutation)
-        }
-        Expr::Pipe(a, b) | Expr::Comma(a, b) | Expr::Cmp(a, _, b) | Expr::Bin(a, _, b) => {
-            has_mutation(a) || has_mutation(b)
-        }
-        Expr::Neg(x) | Expr::Not(x) | Expr::Try(x) | Expr::ArrayCtor(x) | Expr::Index(x) => {
-            has_mutation(x)
-        }
-        Expr::Slice(a, b) => [a, b]
-            .iter()
-            .any(|x| x.as_deref().is_some_and(has_mutation)),
-        Expr::If {
-            branches,
-            else_branch,
-        } => {
-            branches
-                .iter()
-                .any(|(c, t)| has_mutation(c) || has_mutation(t))
-                || else_branch.as_deref().is_some_and(has_mutation)
-        }
-        Expr::As { bind, body, .. } => has_mutation(bind) || has_mutation(body),
-        Expr::ObjectCtor(entries) => entries.iter().any(|(_, v)| has_mutation(v)),
-        // `reduce`/`foreach` update/extract bodies run against the
-        // local accumulator, not the document. Assignments there
-        // (`.a = $x`, `.[$k] |= ...`) target the acc and don't reach
-        // `transform_bytes`. Only check source and init.
-        Expr::Reduce { source, init, .. } => has_mutation(source) || has_mutation(init),
-        Expr::Foreach { source, init, .. } => has_mutation(source) || has_mutation(init),
-        Expr::Def { body, rest, .. } => has_mutation(body) || has_mutation(rest),
-        Expr::Identity
-        | Expr::RecurseAll
-        | Expr::Field(_)
-        | Expr::Iterate
-        | Expr::Lit(_)
-        | Expr::Var(_) => false,
+        Expr::Call { name, .. } => matches!(name.as_ref(), "walk" | "del"),
+        Expr::Pipe(a, b) | Expr::Comma(a, b) => has_mutation(a) || has_mutation(b),
+        _ => false,
     }
 }
 

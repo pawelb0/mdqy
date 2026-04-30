@@ -350,17 +350,23 @@ fn reduce_with_assign_does_not_swallow() {
     }
 }
 
-/// `is_read_only` should return true for assignments that target the
-/// local accumulator inside a `reduce`/`foreach`. The CLI routes any
-/// `is_read_only == false` query through `transform_bytes`, which
-/// silently returns the original document for fold-local mutation.
+/// `is_read_only` should return true unless the expression directly
+/// matches one of the patterns `transform_bytes` handles (`|=`, `del`,
+/// `walk`) reachable through `Pipe`/`Comma`. Assignments nested inside
+/// other constructors (object/array/if/reduce/foreach) target local
+/// values, not the document.
 #[test]
-fn reduce_local_assign_is_read_only() {
-    assert!(compile(r#"reduce ("a","b") as $l ({}; .[$l] = 1)"#).is_read_only());
-    assert!(compile("reduce range(3) as $x ({}; .a = $x)").is_read_only());
-    assert!(compile("foreach range(3) as $x ({}; .a = $x; .)").is_read_only());
+fn is_read_only_matches_mutate_grammar() {
     assert!(!compile(".foo |= 1").is_read_only());
     assert!(!compile("del(.foo)").is_read_only());
+    assert!(!compile("walk(.)").is_read_only());
+    assert!(!compile("headings | .text |= ascii_upcase").is_read_only());
+
+    assert!(compile(r#"reduce ("a","b") as $l ({}; .[$l] = 1)"#).is_read_only());
+    assert!(compile("foreach range(3) as $x ({}; .a = $x; .)").is_read_only());
+    assert!(compile("{a: (.foo = 1)}").is_read_only());
+    assert!(compile("if true then (.foo = 1) else . end").is_read_only());
+    assert!(compile("[.foo |= 1]").is_read_only());
 }
 
 /// `as $x` should bind the immediately preceding term, not the whole
