@@ -32,6 +32,25 @@ fn strings(expr: &str) -> Vec<String> {
     run(expr).iter().map(render).collect()
 }
 
+/// Compile and run `expr` with `null` input; render every output.
+fn null_strings(expr: &str) -> Vec<String> {
+    compile(expr)
+        .run_with_env(Value::Null, mdqy::Env::default())
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect()
+}
+
+/// Compile, run with `null` input, return the first output rendered.
+fn null_first(expr: &str) -> String {
+    null_strings(expr).into_iter().next().expect("at least one output")
+}
+
+/// Run `expr | tojson` against null input and render every output.
+fn null_json(expr: &str) -> Vec<String> {
+    null_strings(&format!("{expr} | tojson"))
+}
+
 fn stress_strings(expr: &str) -> Vec<String> {
     compile(expr)
         .run_tree(&parse(STRESS))
@@ -133,13 +152,7 @@ fn mutation_cases() {
 /// `null` via `--null-input` semantics.
 #[test]
 fn extra_builtins() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(expr)
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_strings;
     assert_eq!(run_null("[range(3)] | length"), ["3"]);
     assert_eq!(run_null("[limit(2; range(100))] | length"), ["2"]);
     assert_eq!(run_null("nth(1; range(10))"), ["1"]);
@@ -172,15 +185,7 @@ fn env_bindings_thread_through() {
 /// `def`, `reduce`, `foreach`, and `as $x` all compile and run.
 #[test]
 fn control_constructs() {
-    fn run_null(expr: &str) -> String {
-        render(
-            &compile(expr)
-                .run_with_env(Value::Null, mdqy::Env::default())
-                .next()
-                .unwrap()
-                .unwrap(),
-        )
-    }
+    let run_null = null_first;
     assert_eq!(run_null("[1,2,3] as $xs | [$xs[] | . + 10] | length"), "3");
     assert_eq!(run_null("reduce range(5) as $x (0; . + $x)"), "10");
     assert_eq!(
@@ -226,15 +231,7 @@ fn table_builtins_project_rows_and_cells() {
 /// `"\(expr)"` interpolation.
 #[test]
 fn string_interpolation() {
-    fn run_null(expr: &str) -> String {
-        render(
-            &compile(expr)
-                .run_with_env(Value::Null, mdqy::Env::default())
-                .next()
-                .unwrap()
-                .unwrap(),
-        )
-    }
+    let run_null = null_first;
     assert_eq!(run_null(r#""hello \(1 + 2)!""#), "hello 3!");
     assert_eq!(run_null(r#""\(42)""#), "42");
     assert_eq!(run_null(r#""a\(1)b\(2)c""#), "a1b2c");
@@ -251,15 +248,7 @@ fn string_interpolation() {
 /// `@format` filters.
 #[test]
 fn format_filters() {
-    fn run_null(expr: &str) -> String {
-        render(
-            &compile(expr)
-                .run_with_env(Value::Null, mdqy::Env::default())
-                .next()
-                .unwrap()
-                .unwrap(),
-        )
-    }
+    let run_null = null_first;
     assert_eq!(run_null(r#""a b & c" | @uri"#), "a%20b%20%26%20c");
     assert_eq!(run_null(r#"["Ada","Bo"] | @csv"#), r#""Ada","Bo""#);
     assert_eq!(run_null(r#"["a","b"] | @tsv"#), "a\tb");
@@ -374,13 +363,7 @@ fn is_read_only_matches_mutate_grammar() {
 /// absorb `2 | .` into the bind, leaving `outer` = the outer input.
 #[test]
 fn as_binds_preceding_term_not_pipeline() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(expr)
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_strings;
     assert_eq!(run_null("2 | . as $x | select($x > 1)"), ["2"]);
     assert_eq!(run_null("2 | (. as $x | select($x > 1))"), ["2"]);
     assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
@@ -389,13 +372,7 @@ fn as_binds_preceding_term_not_pipeline() {
 /// `split("")` should split into single characters, matching jq.
 #[test]
 fn split_empty_yields_characters() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(run_null(r#""abc" | split("")"#), [r#"["a","b","c"]"#]);
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
@@ -404,13 +381,7 @@ fn split_empty_yields_characters() {
 /// can drive value-level mutation without `-U`.
 #[test]
 fn assign_through_recurse_and_select() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(
         run_null(r#"{a:[1,2,3], b:[4,5,6]} | (.. | select(type == "number" and . > 3)) |= . * 10"#),
         [r#"{"a":[1,2,3],"b":[40,50,60]}"#],
@@ -426,13 +397,7 @@ fn assign_through_recurse_and_select() {
 /// apply left-to-right.
 #[test]
 fn assign_update_in_eval() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(run_null("{a: 1} | .a |= . * 10"), [r#"{"a":10}"#]);
     assert_eq!(
         run_null("{a: {b: 1}} | .a.b |= . + 99"),
@@ -450,13 +415,7 @@ fn assign_update_in_eval() {
 /// current value).
 #[test]
 fn assign_set_in_eval() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(run_null("{a: 1} | .a = 99"), [r#"{"a":99}"#]);
     assert_eq!(run_null("{} | .a.b = 1"), [r#"{"a":{"b":1}}"#]);
 }
@@ -464,13 +423,7 @@ fn assign_set_in_eval() {
 /// `del(path)` removes the entries at each resolved path.
 #[test]
 fn del_in_eval() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(run_null("{a:1, b:2} | del(.a)"), [r#"{"b":2}"#]);
     assert_eq!(run_null("[1,2,3] | del(.[1])"), ["[1,3]"]);
     assert_eq!(run_null("{a:1, b:2, c:3} | del(.a, .c)"), [r#"{"b":2}"#]);
@@ -482,13 +435,7 @@ fn del_in_eval() {
 /// each value bottom-up.
 #[test]
 fn walk_runs_as_value_transformation() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(run_null("[1,2,3] | walk(if type == \"number\" then . + 100 else . end)"), ["[101,102,103]"]);
     assert_eq!(
         run_null("{a: 1, b: {c: 2}} | walk(if type == \"number\" then . + 10 else . end)"),
@@ -503,13 +450,7 @@ fn walk_runs_as_value_transformation() {
 /// null/false LHS values produced multiple `b` copies.
 #[test]
 fn alt_operator_falls_back_on_empty() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(expr)
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_strings;
     assert_eq!(run_null("empty // 5"), ["5"]);
     assert_eq!(run_null("(null, null) // 5"), ["5"]);
     assert_eq!(run_null("(null, false) // 5"), ["5"]);
@@ -521,13 +462,7 @@ fn alt_operator_falls_back_on_empty() {
 /// Regression: predicate was silently ignored, returning all paths.
 #[test]
 fn paths_filter_applies_predicate() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(
         run_null("{a: {b: 1}, c: 2} | [paths(. == 1)]"),
         [r#"[["a","b"]]"#],
@@ -542,15 +477,7 @@ fn paths_filter_applies_predicate() {
 /// `1 < 2 == true` parses as `(1 < 2) == true` and is `true`.
 #[test]
 fn comparisons_left_associate() {
-    fn run_null(expr: &str) -> String {
-        render(
-            &compile(expr)
-                .run_with_env(Value::Null, mdqy::Env::default())
-                .next()
-                .unwrap()
-                .unwrap(),
-        )
-    }
+    let run_null = null_first;
     assert_eq!(run_null("1 < 2 == true"), "true");
     assert_eq!(run_null("1 == 1 == true"), "true");
     assert_eq!(run_null("3 > 2 != false"), "true");
@@ -561,15 +488,7 @@ fn comparisons_left_associate() {
 /// truthy reduction of the raw items.
 #[test]
 fn any_all_apply_predicate() {
-    fn run_null(expr: &str) -> String {
-        render(
-            &compile(expr)
-                .run_with_env(Value::Null, mdqy::Env::default())
-                .next()
-                .unwrap()
-                .unwrap(),
-        )
-    }
+    let run_null = null_first;
     assert_eq!(run_null("[1,2,3] | any(. > 2)"), "true");
     assert_eq!(run_null("[1,2,3] | any(. > 99)"), "false");
     assert_eq!(run_null("[1,2,3] | all(. > 0)"), "true");
@@ -582,13 +501,7 @@ fn any_all_apply_predicate() {
 /// String slicing should work like jq: clamp by Unicode codepoint.
 #[test]
 fn string_slice_clamps_by_codepoint() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(expr)
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_strings;
     assert_eq!(run_null(r#""abcdef" | .[1:4]"#), ["bcd"]);
     assert_eq!(run_null(r#""abcdef" | .[-2:]"#), ["ef"]);
     assert_eq!(run_null(r#""abcdef" | .[:0]"#), [""]);
@@ -600,13 +513,7 @@ fn string_slice_clamps_by_codepoint() {
 /// one object per output. jq spec: `{a: (1,2,3)}` yields 3 objects.
 #[test]
 fn object_ctor_fans_out_value_stream() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(&format!("{expr} | tojson"))
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_json;
     assert_eq!(
         run_null("{a: (1,2,3)}"),
         [r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#],
@@ -627,13 +534,7 @@ fn object_ctor_fans_out_value_stream() {
 /// `$x` stays in scope across the whole rhs.
 #[test]
 fn as_body_extends_through_pipes() {
-    fn run_null(expr: &str) -> Vec<String> {
-        compile(expr)
-            .run_with_env(Value::Null, mdqy::Env::default())
-            .map(Result::unwrap)
-            .map(|v| render(&v))
-            .collect()
-    }
+    let run_null = null_strings;
     assert_eq!(run_null(r#""X" as $x | "Y" | $x"#), ["X"]);
     assert_eq!(run_null("1 as $x | 2 as $y | $x + $y"), ["3"]);
     assert_eq!(
@@ -646,15 +547,7 @@ fn as_body_extends_through_pipes() {
 /// prefix unary (`not EXPR`), matching jq.
 #[test]
 fn not_works_as_prefix_and_postfix() {
-    fn run_null(expr: &str) -> String {
-        render(
-            &compile(expr)
-                .run_with_env(Value::Null, mdqy::Env::default())
-                .next()
-                .unwrap()
-                .unwrap(),
-        )
-    }
+    let run_null = null_first;
     assert_eq!(run_null("null | true | not"), "false");
     assert_eq!(run_null("null | false | not"), "true");
     assert_eq!(run_null("null | (1 == 1) | not"), "false");
