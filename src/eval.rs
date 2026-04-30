@@ -277,11 +277,27 @@ fn at(arr: &[Value], n: f64) -> Value {
 }
 
 fn slice(input: &Value, lo: Option<i64>, hi: Option<i64>) -> Result<Value, RunError> {
+    if let Value::String(s) = input {
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len() as i64;
+        let clamp = |x: i64| {
+            let a = if x < 0 { len + x } else { x };
+            a.clamp(0, len) as usize
+        };
+        let start = clamp(lo.unwrap_or(0));
+        let end = clamp(hi.unwrap_or(len));
+        let out: String = if start <= end {
+            chars[start..end].iter().collect()
+        } else {
+            String::new()
+        };
+        return Ok(Value::from(out));
+    }
     let arr: &[Value] = match input {
         Value::Array(a) => a,
         Value::Node(n) => &n.children,
         Value::Null => return Ok(Value::Null),
-        other => return Err(type_err("array or node", other)),
+        other => return Err(type_err("array, node, or string", other)),
     };
     let len = arr.len() as i64;
     let clamp = |x: i64| {

@@ -386,6 +386,23 @@ fn as_binds_preceding_term_not_pipeline() {
     assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
 }
 
+/// String slicing should work like jq: clamp by Unicode codepoint.
+#[test]
+fn string_slice_clamps_by_codepoint() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(expr)
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null(r#""abcdef" | .[1:4]"#), ["bcd"]);
+    assert_eq!(run_null(r#""abcdef" | .[-2:]"#), ["ef"]);
+    assert_eq!(run_null(r#""abcdef" | .[:0]"#), [""]);
+    assert_eq!(run_null(r#""abc" | .[5:10]"#), [""]);
+    assert_eq!(run_null(r#""héllo" | .[0:2]"#), ["hé"]);
+}
+
 /// `{k: stream}` should fan out across the value stream, producing
 /// one object per output. jq spec: `{a: (1,2,3)}` yields 3 objects.
 #[test]
