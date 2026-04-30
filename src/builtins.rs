@@ -82,7 +82,6 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "@html" => one(format_html(&input)),
         "env" | "$ENV" => one(Ok(env_as_value())),
 
-        // Collection builtins that use a key function.
         "sort_by" => one(by_key_array(args, input, env, |items| {
             items.sort_by(|(ka, _), (kb, _)| eval::value_cmp_for_sort(ka, kb));
         })),
@@ -96,17 +95,14 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "min" => one(extreme(input, true)),
         "max" => one(extreme(input, false)),
 
-        // Stream slicing.
         "range" => range(args, input, env),
         "limit" => limit(args, input, env),
         "nth" => one(nth(args, input, env)),
 
-        // Paths.
         "paths" => paths(args, input, env),
         "getpath" => one(getpath(args, input, env)),
         "setpath" => one(setpath(args, input, env)),
 
-        // Markdown helpers.
         "toc" => one(Ok(toc(&input))),
         "frontmatter" => one(Ok(frontmatter(&input))),
         "node" => one(build_node(args, input, env)),

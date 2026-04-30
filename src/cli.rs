@@ -69,11 +69,11 @@ pub struct Args {
     #[arg(long)]
     pub stdin: bool,
 
-    /// Bind a string `$NAME`. Mirrors jq.
+    /// Bind a string `$NAME`.
     #[arg(long = "arg", num_args = 2, value_names = ["NAME", "VALUE"])]
     pub arg: Vec<String>,
 
-    /// Bind a JSON `$NAME`. Mirrors jq.
+    /// Bind a JSON `$NAME`.
     #[arg(long = "argjson", num_args = 2, value_names = ["NAME", "JSON"])]
     pub argjson: Vec<String>,
 
@@ -133,15 +133,11 @@ pub struct Args {
     pub explain_mode: bool,
 }
 
-/// The built `clap::Command` for the `mdqy` binary. Exposed so
-/// helper binaries (completion / man-page generators) can drive the
-/// same parser without forking its spec.
 #[must_use]
 pub fn cli_command() -> clap::Command {
     <Args as clap::CommandFactory>::command()
 }
 
-/// Main entry called from `src/bin/mdqy.rs`.
 pub fn run() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -302,7 +298,6 @@ pub fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Collect `--arg` / `--argjson` into an `Env`.
 fn build_env(args: &Args) -> anyhow::Result<crate::Env> {
     let mut env = crate::Env::default();
     for pair in args.arg.chunks_exact(2) {
