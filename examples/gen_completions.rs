@@ -1,12 +1,3 @@
-//! Print shell completions to stdout.
-//!
-//! Usage:
-//! ```sh
-//! cargo run --example gen_completions -- bash > mdqy.bash
-//! cargo run --example gen_completions -- zsh  > _mdqy
-//! cargo run --example gen_completions -- fish > mdqy.fish
-//! ```
-
 use std::io;
 
 use clap_complete::{generate, Shell};

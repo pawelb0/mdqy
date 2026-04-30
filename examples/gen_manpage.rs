@@ -1,9 +1,3 @@
-//! Emit a roff man page to stdout.
-//!
-//! ```sh
-//! cargo run --example gen_manpage > mdqy.1
-//! ```
-
 use std::io;
 
 fn main() {
