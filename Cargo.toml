@@ -34,18 +34,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = { version = "1.12.3", default-features = false, features = ["std", "unicode-perl"] }
 ignore = "0.4.23"
-# Unified diff for --dry-run output.
 similar = { version = "2.6", features = ["inline"] }
 anyhow = "1"
 thiserror = "2.0.18"
-# Anchor slugs for headings.
 slug = "0.1"
-# Atomic in-place writes under -U.
 tempfile = "3"
-# Frontmatter parsing.
 serde_yaml = "0.9"
 toml = "0.8"
-# Per-file parallelism under --workers.
 rayon = "1.10"
 
 mdcat = { package = "mdcat-ng", version = "0.2", optional = true, default-features = false, features = ["image-processing"] }
