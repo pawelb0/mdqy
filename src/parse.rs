@@ -14,9 +14,7 @@ pub fn parse(tokens: &[Spanned<'_>]) -> Result<Expr, CompileError> {
     if !matches!(p.peek(), Tok::Eof) {
         return p.err("end of input");
     }
-    // If the query used `>` combinators, the desugaring references
-    // `$__root` so `section(...)` can run against the original root
-    // instead of whichever node the chain flowed into. Bind it here.
+    // `>` combinator desugaring needs `$__root`. Bind it once here.
     if p.chain_var > 0 {
         Ok(Expr::As {
             bind: Box::new(Expr::Identity),
@@ -123,8 +121,6 @@ impl<'t, 's> Parser<'t, 's> {
         self.expect(Tok::RParen, "`)`")?;
         Ok(params)
     }
-
-    // ---- precedence layers -------------------------------------------------
 
     fn parse_pipeline(&mut self) -> Result<Expr, CompileError> {
         self.parse_pipeline_with(Self::parse_comma, true)
@@ -322,9 +318,8 @@ impl<'t, 's> Parser<'t, 's> {
                     self.advance();
                     lhs = self.apply_pseudo(lhs, pseudo)?;
                 }
-                // `>` as a selector combinator. Only when followed by
-                // another selector origin; otherwise it stays for
-                // parse_cmp to read as `Gt`.
+                // `>` as combinator only when RHS starts a selector;
+                // else parse_cmp picks it up as Gt.
                 Tok::Gt if looks_like_selector_start(self.peek_n(1)) => {
                     self.advance();
                     let rhs = self.parse_postfix()?;
@@ -895,10 +890,8 @@ fn build_string_literal(raw: &str) -> Result<Expr, CompileError> {
     for part in iter {
         result = Expr::Bin(Box::new(result), BinOp::Add, Box::new(part));
     }
-    // If the first part was an interpolation, the expression evaluates
-    // to the tostring() output directly. Prepend "" so the type anchors
-    // to String (matters when tostring returns a non-string-compatible
-    // value through some mis-wiring; cheap insurance).
+    // Prepend "" so the type anchors to String when the head is an
+    // interpolation.
     if !matches!(result, Expr::Lit(Literal::String(_))) {
         result = Expr::Bin(Box::new(lit_str("")), BinOp::Add, Box::new(result));
     }
