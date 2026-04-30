@@ -116,6 +116,7 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "frontmatter" => one(Ok(frontmatter(&input))),
         "node" => one(build_node(args, input, env)),
         "walk" => walk_call(args, input, env),
+        "del" => del_call(args, input, env),
 
         _ => return None,
     })
@@ -1378,6 +1379,37 @@ fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
         }
     }
     Ok(result)
+}
+
+/// `del(path_expr)`. Resolves all paths and deletes them in
+/// descending order so array indices don't shift between removals.
+fn del_call(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 1 {
+        return err(RunError::Other("del/1: expected one argument".into()));
+    }
+    let mut paths = match eval::paths_of_expr(&args[0], &input, env) {
+        Ok(p) => p,
+        Err(e) => return err(e),
+    };
+    paths.sort_by(|a, b| compare_paths(b, a));
+    let mut current = input;
+    for path in paths {
+        current = match eval::del_at_path(current, &path) {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
+    }
+    ok(current)
+}
+
+fn compare_paths(a: &[Value], b: &[Value]) -> Ordering {
+    for (x, y) in a.iter().zip(b.iter()) {
+        let ord = eval::value_cmp_for_sort(x, y);
+        if !ord.is_eq() {
+            return ord;
+        }
+    }
+    a.len().cmp(&b.len())
 }
 
 fn value_id_eq(a: &Value, b: &Value) -> bool {

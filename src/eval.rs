@@ -13,7 +13,7 @@ use crate::ast::{attr, Node};
 use crate::builtins;
 use crate::error::RunError;
 use crate::events::plain_text;
-use crate::expr::{BinOp, CmpOp, Expr, Literal, ObjKey};
+use crate::expr::{AssignOp, BinOp, CmpOp, Expr, Literal, ObjKey};
 use crate::value::Value;
 
 /// Scope: `$x` variables, user-defined functions, and filter-typed
@@ -182,9 +182,7 @@ pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
             let new_env = env.clone().with_func(name, f);
             eval(rest, input, &new_env)
         }
-        Expr::Assign(..) => once(Err(RunError::NotImplemented {
-            feature: "mutation runs via Query::transform_bytes",
-        })),
+        Expr::Assign(lhs, op, rhs) => assign_eval(lhs, *op, rhs, input, env),
     }
 }
 
@@ -662,4 +660,236 @@ fn reduce_fold(
         out.push(Ok(acc));
     }
     Box::new(out.into_iter())
+}
+
+// --- path-based mutation ----------------------------------------------------
+
+/// Resolve `expr` as a path-shape against `input`. Returns one or
+/// more concrete paths, each a sequence of String/Number steps.
+/// Errors on expression shapes that aren't path-like.
+pub(crate) fn paths_of_expr(
+    expr: &Expr,
+    input: &Value,
+    env: &Env,
+) -> Result<Vec<Vec<Value>>, RunError> {
+    match expr {
+        Expr::Identity => Ok(vec![Vec::new()]),
+        Expr::Field(name) => Ok(vec![vec![Value::from(name.to_string())]]),
+        Expr::Index(idx_expr) => {
+            let mut out = Vec::new();
+            for r in eval(idx_expr, input.clone(), env) {
+                let v = r?;
+                match v {
+                    Value::Number(_) | Value::String(_) => out.push(vec![v]),
+                    other => return Err(type_err("string or number", &other)),
+                }
+            }
+            Ok(out)
+        }
+        Expr::Iterate => match input {
+            Value::Array(a) => Ok((0..a.len())
+                .map(|i| vec![Value::from(i as i64)])
+                .collect()),
+            Value::Object(m) => Ok(m.keys().map(|k| vec![Value::from(k.clone())]).collect()),
+            Value::Node(n) => Ok((0..n.children.len())
+                .map(|i| vec![Value::from(i as i64)])
+                .collect()),
+            Value::Null => Ok(Vec::new()),
+            other => Err(type_err("iterable", other)),
+        },
+        Expr::Pipe(a, b) => {
+            let mut out = Vec::new();
+            for p in paths_of_expr(a, input, env)? {
+                let v = get_at_path(input, &p);
+                for q in paths_of_expr(b, &v, env)? {
+                    let mut combined = p.clone();
+                    combined.extend(q);
+                    out.push(combined);
+                }
+            }
+            Ok(out)
+        }
+        Expr::Comma(a, b) => {
+            let mut out = paths_of_expr(a, input, env)?;
+            out.extend(paths_of_expr(b, input, env)?);
+            Ok(out)
+        }
+        Expr::Try(inner) => match paths_of_expr(inner, input, env) {
+            Ok(p) => Ok(p),
+            Err(_) => Ok(Vec::new()),
+        },
+        _ => Err(RunError::Other("invalid path expression".into())),
+    }
+}
+
+pub(crate) fn get_at_path(input: &Value, path: &[Value]) -> Value {
+    let mut cur = input.clone();
+    for step in path {
+        cur = match (&cur, step) {
+            (Value::Object(m), Value::String(k)) => {
+                m.get(k.as_ref()).cloned().unwrap_or(Value::Null)
+            }
+            (Value::Array(a), Value::Number(n)) => {
+                let i = *n as i64;
+                let idx = if i < 0 { a.len() as i64 + i } else { i };
+                if idx < 0 || idx as usize >= a.len() {
+                    Value::Null
+                } else {
+                    a[idx as usize].clone()
+                }
+            }
+            (Value::Node(node), Value::String(k)) => attr::by_name(k.as_ref())
+                .and_then(|key| node.attrs.get(key).cloned())
+                .unwrap_or(Value::Null),
+            (Value::Node(node), Value::Number(n)) => {
+                let i = *n as i64;
+                let idx = if i < 0 { node.children.len() as i64 + i } else { i };
+                if idx < 0 || idx as usize >= node.children.len() {
+                    Value::Null
+                } else {
+                    node.children[idx as usize].clone()
+                }
+            }
+            _ => return Value::Null,
+        };
+    }
+    cur
+}
+
+pub(crate) fn set_at_path(
+    input: Value,
+    path: &[Value],
+    value: Value,
+) -> Result<Value, RunError> {
+    let Some((head, tail)) = path.split_first() else {
+        return Ok(value);
+    };
+    match (input, head) {
+        (Value::Node(n), Value::String(k)) => {
+            let key = attr::by_name(k.as_ref())
+                .ok_or_else(|| RunError::Other(format!("unknown attribute `{k}`")))?;
+            let current = n.attrs.get(key).cloned().unwrap_or(Value::Null);
+            let new_val = set_at_path(current, tail, value)?;
+            let mut new_node = (*n).clone();
+            new_node.attrs.insert(key, new_val);
+            new_node.dirty = true;
+            Ok(Value::Node(Arc::new(new_node)))
+        }
+        (Value::Node(n), Value::Number(num)) => {
+            let i = *num as i64;
+            let idx = if i < 0 { n.children.len() as i64 + i } else { i };
+            if idx < 0 || idx as usize >= n.children.len() {
+                return Err(RunError::Other(format!("index {i} out of range")));
+            }
+            let mut new_node = (*n).clone();
+            let current = new_node.children[idx as usize].clone();
+            let new_val = set_at_path(current, tail, value)?;
+            new_node.children[idx as usize] = new_val;
+            new_node.dirty = true;
+            Ok(Value::Node(Arc::new(new_node)))
+        }
+        (Value::Object(m), Value::String(k)) => {
+            let mut new_map = (*m).clone();
+            let current = new_map.get(k.as_ref()).cloned().unwrap_or(Value::Null);
+            let new_val = set_at_path(current, tail, value)?;
+            new_map.insert(k.to_string(), new_val);
+            Ok(Value::Object(Arc::new(new_map)))
+        }
+        (Value::Array(a), Value::Number(num)) => {
+            let mut new_arr = (*a).clone();
+            let i = *num as i64;
+            let idx = if i < 0 {
+                (new_arr.len() as i64 + i).max(0)
+            } else {
+                i
+            } as usize;
+            while new_arr.len() <= idx {
+                new_arr.push(Value::Null);
+            }
+            let current = new_arr[idx].clone();
+            let new_val = set_at_path(current, tail, value)?;
+            new_arr[idx] = new_val;
+            Ok(Value::Array(Arc::new(new_arr)))
+        }
+        (Value::Null, Value::String(k)) => {
+            let new_val = set_at_path(Value::Null, tail, value)?;
+            let mut m: BTreeMap<String, Value> = BTreeMap::new();
+            m.insert(k.to_string(), new_val);
+            Ok(Value::Object(Arc::new(m)))
+        }
+        (Value::Null, Value::Number(_)) => {
+            let new_val = set_at_path(Value::Null, tail, value)?;
+            Ok(Value::Array(Arc::new(vec![new_val])))
+        }
+        (other, _) => Err(type_err("object, array, or node", &other)),
+    }
+}
+
+pub(crate) fn del_at_path(input: Value, path: &[Value]) -> Result<Value, RunError> {
+    let Some((head, tail)) = path.split_first() else {
+        return Ok(Value::Null);
+    };
+    if tail.is_empty() {
+        return match (input, head) {
+            (Value::Node(n), Value::String(k)) => {
+                let Some(key) = attr::by_name(k.as_ref()) else {
+                    return Err(RunError::Other(format!("unknown attribute `{k}`")));
+                };
+                let mut new_node = (*n).clone();
+                new_node.attrs.remove(key);
+                new_node.dirty = true;
+                Ok(Value::Node(Arc::new(new_node)))
+            }
+            (Value::Object(m), Value::String(k)) => {
+                let mut new_map = (*m).clone();
+                new_map.remove(k.as_ref());
+                Ok(Value::Object(Arc::new(new_map)))
+            }
+            (Value::Array(a), Value::Number(num)) => {
+                let i = *num as i64;
+                let idx = if i < 0 { (a.len() as i64 + i).max(0) } else { i } as usize;
+                if idx >= a.len() {
+                    return Ok(Value::Array(a));
+                }
+                let mut new_arr = (*a).clone();
+                new_arr.remove(idx);
+                Ok(Value::Array(Arc::new(new_arr)))
+            }
+            (other, _) => Ok(other),
+        };
+    }
+    let head_only = std::slice::from_ref(head);
+    let child = get_at_path(&input, head_only);
+    let new_child = del_at_path(child, tail)?;
+    set_at_path(input, head_only, new_child)
+}
+
+fn assign_eval(lhs: &Expr, op: AssignOp, rhs: &Expr, input: Value, env: &Env) -> Stream {
+    let paths = match paths_of_expr(lhs, &input, env) {
+        Ok(p) => p,
+        Err(e) => return once(Err(e)),
+    };
+    let mut current = input.clone();
+    for path in paths {
+        let new_val = match op {
+            AssignOp::Update => {
+                let cur_val = get_at_path(&current, &path);
+                match eval(rhs, cur_val, env).next().transpose() {
+                    Ok(Some(v)) => v,
+                    Ok(None) => continue,
+                    Err(e) => return once(Err(e)),
+                }
+            }
+            AssignOp::Set => match eval(rhs, input.clone(), env).next().transpose() {
+                Ok(Some(v)) => v,
+                Ok(None) => continue,
+                Err(e) => return once(Err(e)),
+            },
+        };
+        current = match set_at_path(current, &path, new_val) {
+            Ok(v) => v,
+            Err(e) => return once(Err(e)),
+        };
+    }
+    once(Ok(current))
 }

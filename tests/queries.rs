@@ -400,6 +400,62 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// `|=` updates the value at each resolved path. Path-shape covers
+/// Identity, Field, Index, Iterate, Pipe, Comma. Multi-output paths
+/// apply left-to-right.
+#[test]
+fn assign_update_in_eval() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null("{a: 1} | .a |= . * 10"), [r#"{"a":10}"#]);
+    assert_eq!(
+        run_null("{a: {b: 1}} | .a.b |= . + 99"),
+        [r#"{"a":{"b":100}}"#],
+    );
+    assert_eq!(run_null("[1,2,3] | .[1] |= . * 100"), ["[1,200,3]"]);
+    assert_eq!(run_null("[1,2,3] | .[] |= . + 100"), ["[101,102,103]"]);
+    assert_eq!(
+        run_null("{a:1, b:2} | (.a, .b) |= . * 10"),
+        [r#"{"a":10,"b":20}"#],
+    );
+}
+
+/// `=` evaluates rhs against the original input (not the path's
+/// current value).
+#[test]
+fn assign_set_in_eval() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null("{a: 1} | .a = 99"), [r#"{"a":99}"#]);
+    assert_eq!(run_null("{} | .a.b = 1"), [r#"{"a":{"b":1}}"#]);
+}
+
+/// `del(path)` removes the entries at each resolved path.
+#[test]
+fn del_in_eval() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null("{a:1, b:2} | del(.a)"), [r#"{"b":2}"#]);
+    assert_eq!(run_null("[1,2,3] | del(.[1])"), ["[1,3]"]);
+    assert_eq!(run_null("{a:1, b:2, c:3} | del(.a, .c)"), [r#"{"b":2}"#]);
+    assert_eq!(run_null("[10,20,30,40] | del(.[1], .[3])"), ["[10,30]"]);
+}
+
 /// `walk(f)` should run as a pure value transformation in eval.
 /// Recursive descent over Array/Object/Node/scalar; apply `f` at
 /// each value bottom-up.
