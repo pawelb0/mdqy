@@ -4,6 +4,7 @@ use mdqy::{parse, Query, Value};
 use pulldown_cmark::Parser;
 
 const SRC: &str = include_str!("fixtures/tiny.md");
+const STRESS: &str = include_str!("fixtures/stress.md");
 
 fn compile(expr: &str) -> Query {
     Query::compile(expr).unwrap_or_else(|e| panic!("compile {expr}: {e}"))
@@ -29,6 +30,14 @@ fn render(v: &Value) -> String {
 
 fn strings(expr: &str) -> Vec<String> {
     run(expr).iter().map(render).collect()
+}
+
+fn stress_strings(expr: &str) -> Vec<String> {
+    compile(expr)
+        .run_tree(&parse(STRESS))
+        .map(Result::unwrap)
+        .map(|v| render(&v))
+        .collect()
 }
 
 /// Table-driven smoke test: expression -> expected stringified results.
@@ -435,6 +444,105 @@ fn sections_level_filter_via_select() {
         .map(|v| render(&v))
         .collect();
     assert_eq!(out, ["B", "C"]);
+}
+
+/// Gnarly read queries against a rich fixture. Each row exercises a
+/// distinct combination of language features. JSON outputs go through
+/// `tojson` so the expected value stays a single canonical string.
+#[test]
+fn complex_query_stress() {
+    let cases: &[(&str, &[&str])] = &[
+        ("[sections] | length", &["7"]),
+        ("[sections(2)] | length", &["3"]),
+        ("[sections(3)] | length", &["2"]),
+        (
+            "sections(2) | .children[0].text",
+            &["Install", "Usage", "Appendix"],
+        ),
+        (
+            "# Install > codeblocks:lang(bash):first | .literal",
+            &["sudo apt install foo\n"],
+        ),
+        ("# Usage > links | .href", &["#install"]),
+        (
+            r#"[.. | select(type == "code" and (.lang // "") == "rust")] | length"#,
+            &["1"],
+        ),
+        (
+            r#"if (frontmatter.title // null) == (h1:first | .text) then "match" else "mismatch" end"#,
+            &["match"],
+        ),
+        (
+            r#"headings | "\(.level)#\(.anchor): \(.text)""#,
+            &[
+                "1#stress-doc: Stress Doc",
+                "2#install: Install",
+                "3#linux: Linux",
+                "3#macos: Macos",
+                "2#usage: Usage",
+                "2#appendix: Appendix",
+                "4#deep-heading: Deep heading",
+            ],
+        ),
+        (
+            "[codeblocks | .lang] | group_by(.) | map({lang: .[0], count: length}) | sort_by(.lang) | tojson",
+            &[r#"[{"count":4,"lang":"bash"},{"count":2,"lang":"python"},{"count":1,"lang":"rust"},{"count":1,"lang":"text"}]"#],
+        ),
+        (
+            r#"[codeblocks | {lang, lines: (.literal | split("\n") | length)}] | group_by(.lang) | map({lang: .[0].lang, total: (map(.lines) | add)}) | sort_by(-.total) | tojson"#,
+            &[r#"[{"lang":"bash","total":8},{"lang":"python","total":4},{"lang":"rust","total":4},{"lang":"text","total":2}]"#],
+        ),
+        (
+            "[headings | .text] | sort_by(length) | .[0:3] | tojson",
+            &[r#"["Linux","Macos","Usage"]"#],
+        ),
+        (
+            r#"[.. | select(type == "link" or type == "image") | (.href // .src)] | unique | tojson"#,
+            &[r##"["#install","#nowhere","http://old.example.com/path","https://example.com/","images/diagram.png"]"##],
+        ),
+        (
+            r##"[headings | .anchor] as $a | [links | .href | select(startswith("#")) | ltrimstr("#") | (. as $x | select(($a | map(. == $x) | any) == false))] | tojson"##,
+            &[r#"["nowhere"]"#],
+        ),
+    ];
+    for (expr, want) in cases {
+        assert_eq!(&stress_strings(expr), want, "query: {expr}");
+    }
+}
+
+/// Mutation stress: each row asserts substring presence/absence on the
+/// transformed bytes. Patterns are picked so substring containment is
+/// unambiguous (no `## X` vs `### X` confusion).
+#[test]
+fn complex_mutation_stress() {
+    type Case<'a> = (&'a str, &'a [&'a str], &'a [&'a str]);
+    let cases: &[Case] = &[
+        (
+            r#"(.. | select(type == "link") | select(.href | startswith("http:"))).href |= sub("http:"; "https:")"#,
+            &["https://old.example.com/path"],
+            &["http://old.example.com"],
+        ),
+        (
+            r#"(.. | select(type == "code") | select(.lang == "bash")).lang |= "shell""#,
+            &["shell"],
+            &["bash"],
+        ),
+    ];
+    for (expr, must_contain, must_not_contain) in cases {
+        let out = compile(expr)
+            .transform_bytes(STRESS.as_bytes())
+            .unwrap_or_else(|e| panic!("transform {expr}: {e}"));
+        let text = String::from_utf8(out).unwrap();
+        for needle in *must_contain {
+            assert!(text.contains(needle), "{expr}: missing `{needle}`\n{text}");
+        }
+        for needle in *must_not_contain {
+            assert!(
+                !text.contains(needle),
+                "{expr}: should exclude `{needle}`\n{text}"
+            );
+        }
+    }
 }
 
 /// Stream and tree runners agree for every stream-eligible query.
