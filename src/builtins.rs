@@ -1,9 +1,5 @@
-//! Builtin functions. One `invoke(name, ...)` dispatch.
-//!
-//! Two groups share the table: markdown helpers (`headings`,
-//! `codeblocks`, `section`, ...) work on Node values built from the
-//! parser; jq classics (`select`, `map`, `type`, `length`, `sub`,
-//! `gsub`, ...) match the jq spec across every Value variant.
+//! Builtins. One `invoke(name, ...)` dispatch covers markdown filters
+//! and jq stdlib.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -20,8 +16,7 @@ use crate::value::Value;
 
 type Stream = Box<dyn Iterator<Item = Result<Value, RunError>>>;
 
-/// Invoke the builtin called `name`. Returns `None` if the name
-/// isn't registered, so the caller can surface `unknown builtin`.
+/// `None` for unregistered names; caller raises `unknown builtin`.
 pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stream> {
     use NodeKind::{Code, FootnoteDef, Heading, Image, Item, Link, List, Paragraph, Quote, Table};
     Some(match name {
@@ -122,7 +117,6 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
     })
 }
 
-// --- helpers: stream constructors -------------------------------------------
 
 fn ok(v: Value) -> Stream {
     Box::new(std::iter::once(Ok(v)))
@@ -141,12 +135,10 @@ fn type_err(expected: &str, got: &Value) -> RunError {
     }
 }
 
-/// First output of `expr` against `input`. Empty stream → `None`.
 fn eval_first(expr: &Expr, input: &Value, env: &Env) -> Result<Option<Value>, RunError> {
     eval::eval(expr, input.clone(), env).next().transpose()
 }
 
-// --- markdown filters --------------------------------------------------------
 
 fn descendants(input: Value, kind: NodeKind) -> Stream {
     let mut out = Vec::new();
@@ -236,10 +228,6 @@ fn build_sections(node: &Node, name: &str, out: &mut Vec<Value>) {
     }
 }
 
-/// `sections` (no args) wraps every heading + its body into a Section
-/// node and streams them in document order. `sections(N)` filters by
-/// heading level. Body extends until the next heading at level <= the
-/// section heading's.
 fn sections(args: &[Expr], input: Value, env: &Env) -> Stream {
     let level_filter = match args.len() {
         0 => None,
@@ -387,7 +375,6 @@ fn error_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
     err(RunError::Other(msg))
 }
 
-// --- collections -------------------------------------------------------------
 
 fn first_or(args: &[Expr], input: Value, env: &Env, first: bool) -> Stream {
     if args.is_empty() {
@@ -612,7 +599,6 @@ fn to_number(v: &Value) -> Result<Value, RunError> {
     }
 }
 
-// --- regex / string ops ------------------------------------------------------
 
 fn regex_bool(
     args: &[Expr],
@@ -682,7 +668,6 @@ fn eval_string_arg(arg: Option<&Expr>, input: &Value, env: &Env) -> Result<Strin
     }
 }
 
-// ---- string / json helpers -------------------------------------------------
 
 fn split(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
     let s = expect_string(input)?;
@@ -760,7 +745,6 @@ fn from_json(input: &Value) -> Result<Value, RunError> {
     Ok(crate::emit::json::value_from_json(j))
 }
 
-/// `@uri`: percent-encode a string per RFC 3986 unreserved set.
 fn format_uri(input: &Value) -> Result<Value, RunError> {
     let s = expect_string(input)?;
     let mut out = String::with_capacity(s.len());
@@ -775,9 +759,6 @@ fn format_uri(input: &Value) -> Result<Value, RunError> {
     Ok(Value::from(out))
 }
 
-/// `@csv` / `@tsv`: join an array of scalars with a separator. Strings
-/// get quoted (CSV style: embedded quotes doubled) when `quote` is
-/// set; TSV passes strings through unchanged.
 fn format_separated(input: &Value, sep: char, quote: bool) -> Result<Value, RunError> {
     let Value::Array(arr) = input else {
         return Err(type_err("array", input));
@@ -810,9 +791,6 @@ fn format_separated(input: &Value, sep: char, quote: bool) -> Result<Value, RunE
     Ok(Value::from(out))
 }
 
-/// `@sh`: single-quote a string for safe shell pasting. Embedded
-/// single quotes get closed, escaped, and reopened: `don't` ->
-/// `'don'\''t'`. Arrays join with spaces.
 fn format_sh(input: &Value) -> Result<Value, RunError> {
     fn escape_one(s: &str, out: &mut String) {
         out.push('\'');
@@ -848,7 +826,6 @@ fn format_sh(input: &Value) -> Result<Value, RunError> {
     }
 }
 
-/// `@html`: escape `<`, `>`, `&`, `"`, `'`.
 fn format_html(input: &Value) -> Result<Value, RunError> {
     let s = expect_string(input)?;
     let mut out = String::with_capacity(s.len());
@@ -870,11 +847,7 @@ fn env_as_value() -> Value {
     Value::Object(Arc::new(map))
 }
 
-// ---- key-function collection helpers ---------------------------------------
 
-/// Evaluate `f` on each array element to produce `(key, element)` pairs
-/// and hand them to `reorder`. Result is an Array of the elements in
-/// whatever order the reorder step leaves them in.
 fn by_key_array(
     args: &[Expr],
     input: Value,
@@ -976,10 +949,7 @@ fn expect_array(v: &Value) -> Result<&Vec<Value>, RunError> {
     }
 }
 
-// ---- stream slicing --------------------------------------------------------
 
-/// First output of `expr` coerced to f64. `default` is used when the
-/// argument's stream is empty.
 fn eval_number(expr: &Expr, input: &Value, env: &Env, default: f64) -> Result<f64, RunError> {
     match eval_first(expr, input, env)? {
         Some(Value::Number(n)) => Ok(n),
@@ -988,7 +958,6 @@ fn eval_number(expr: &Expr, input: &Value, env: &Env, default: f64) -> Result<f6
     }
 }
 
-/// `range(m; n)`; three-arg form takes a stride.
 fn range(args: &[Expr], input: Value, env: &Env) -> Stream {
     let nums: Result<Vec<f64>, _> = args
         .iter()
@@ -1045,10 +1014,7 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
         .unwrap_or(Ok(Value::Null))
 }
 
-// ---- paths -----------------------------------------------------------------
 
-/// `paths` streams every non-empty path into `input` as an array of
-/// keys/indices.
 fn paths(args: &[Expr], input: Value, env: &Env) -> Stream {
     let mut all = Vec::new();
     eval::collect_recurse_paths(&input, Vec::new(), &mut all);
@@ -1081,8 +1047,7 @@ fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     Ok(eval::get_at_path(&input, &path))
 }
 
-/// `setpath(path; value)` writes into a cloned `input`. Creates
-/// missing intermediate containers along the way.
+/// Creates missing intermediate containers along the path.
 fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     if args.len() != 2 {
         return Err(RunError::Other("setpath/2 expects (path; value)".into()));
@@ -1098,7 +1063,6 @@ fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     eval::set_at_path(input, path.as_ref(), value)
 }
 
-// ---- markdown: toc ---------------------------------------------------------
 
 fn toc(input: &Value) -> Value {
     let mut headings = Vec::new();
@@ -1118,10 +1082,8 @@ fn collect_headings(v: &Value, out: &mut Vec<Arc<Node>>) {
     }
 }
 
-/// `node(obj)` lifts an object of shape
-/// `{kind, <attrs>..., children?}` into a freshly constructed Node.
-/// Unknown `.kind` strings default to `paragraph`. The result is
-/// dirty so serialize regenerates it.
+/// Unknown `.kind` strings default to `paragraph`. Result is dirty
+/// so the serializer regenerates it.
 fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let source = match args.first() {
         Some(arg) => eval_first(arg, &input, env)?.unwrap_or(Value::Null),
@@ -1173,8 +1135,8 @@ fn heading_to_entry(node: Arc<Node>) -> Value {
     Value::Object(Arc::new(obj))
 }
 
-/// `walk(f)`: post-order rewrite. Untouched subtrees keep their Arc
-/// identity so the serialiser can copy clean spans verbatim.
+/// Post-order rewrite. Untouched subtrees keep their Arc identity so
+/// the serialiser can copy clean spans verbatim.
 fn walk_call(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("walk/1: expected one argument".into()));
@@ -1246,8 +1208,7 @@ fn walk_seq(items: &[Value], f: &Expr, env: &Env) -> Result<(Vec<Value>, bool), 
     Ok((out, changed))
 }
 
-/// `del(path_expr)`. Resolves all paths and deletes them in
-/// descending order so array indices don't shift between removals.
+/// Deletes paths in descending order so array indices don't shift.
 fn del_call(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("del/1: expected one argument".into()));

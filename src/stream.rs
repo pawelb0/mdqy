@@ -1,10 +1,5 @@
-//! Event-stream evaluator.
-//!
-//! For the narrow class of queries that [`crate::analyze::plan`]
-//! accepts, this runs straight off the `pulldown_cmark::Event`
-//! iterator. No Node tree gets built, and allocations are O(matched
-//! elements) instead of O(all nodes). Queries outside that class
-//! fall through to [`crate::eval`], which builds the full tree.
+//! Event-stream evaluator. Runs straight off `pulldown_cmark::Event`
+//! for queries that [`crate::analyze::plan`] accepts.
 
 use pulldown_cmark::{CodeBlockKind, Event, Tag, TagEnd};
 
@@ -153,7 +148,6 @@ where
     }
 }
 
-// ---- tag helpers ------------------------------------------------------------
 
 fn tag_kind(tag: &Tag<'_>) -> Option<NodeKind> {
     Some(match tag {

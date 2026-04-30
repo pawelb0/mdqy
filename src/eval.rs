@@ -169,7 +169,6 @@ pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
     }
 }
 
-// --- stream helpers ---------------------------------------------------------
 
 fn once(r: Result<Value, RunError>) -> Stream {
     Box::new(std::iter::once(r))
@@ -191,7 +190,6 @@ fn lit(l: &Literal) -> Value {
     }
 }
 
-// --- access -----------------------------------------------------------------
 
 fn field(input: &Value, name: &str) -> Result<Value, RunError> {
     match input {
@@ -310,7 +308,6 @@ fn eval_int(expr: Option<&Expr>, input: &Value, env: &Env) -> Result<Option<i64>
     }
 }
 
-// --- compare / binary -------------------------------------------------------
 
 fn cmp_stream(l: &Expr, op: CmpOp, r: &Expr, input: Value, env: &Env) -> Stream {
     cross(l, r, input, env, move |lv, rv| {
@@ -376,9 +373,7 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
     let r = r.clone();
     let outer = input.clone();
     if matches!(op, BinOp::Alt) {
-        // jq spec: `a // b` emits the non-null/non-false outputs of
-        // `a`. If `a` yields none (empty stream or all null/false),
-        // emit `b` once against the original input.
+        // `a // b`: emit truthy LHS, else `b` once against outer input.
         let mut keep: Vec<Result<Value, RunError>> = Vec::new();
         let mut had_truthy = false;
         for x in eval(l, input, &env) {
@@ -462,7 +457,6 @@ fn neg(v: Value) -> Result<Value, RunError> {
     }
 }
 
-// --- control flow -----------------------------------------------------------
 
 fn if_stream(
     branches: &[(Expr, Expr)],
@@ -525,7 +519,6 @@ fn object(entries: &[(ObjKey, Expr)], input: Value, env: &Env) -> Stream {
     Box::new(out.into_iter())
 }
 
-// --- recursive descent ------------------------------------------------------
 
 struct RecurseAll {
     stack: Vec<Value>,
@@ -545,8 +538,7 @@ impl Iterator for RecurseAll {
     }
 }
 
-/// Call dispatch. Filter-typed parameters (from `def`) win first,
-/// then user-defined functions, then the builtin registry.
+/// Filter params (from `def`) first, then user fns, then builtins.
 fn dispatch_call(name: &Arc<str>, args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.is_empty() {
         if let Some(filter) = env.lookup_filter(name) {
@@ -561,8 +553,8 @@ fn dispatch_call(name: &Arc<str>, args: &[Expr], input: Value, env: &Env) -> Str
                 args.len()
             ))));
         }
-        // Capture caller's env so each filter argument evaluates in
-        // the scope it was passed from, not the callee's scope.
+        // Filter args evaluate in caller's env, not callee's, else
+        // recursive `def f(n): ... f(n-1)` self-binds and loops.
         let caller_env = env.clone();
         let mut new_env = env.clone();
         for (p, a) in f.params.iter().zip(args.iter()) {
@@ -578,9 +570,7 @@ fn dispatch_call(name: &Arc<str>, args: &[Expr], input: Value, env: &Env) -> Str
         .unwrap_or_else(|| once(Err(RunError::Other(format!("unknown builtin `{name}`")))))
 }
 
-/// Shared body for `reduce` and `foreach`. `extract == None` means
-/// reduce (yield only the final accumulator); `Some(e)` means foreach
-/// (yield `e(acc)` per iteration).
+/// `extract == None` is reduce, `Some(e)` is foreach.
 fn reduce_fold(
     source: &Expr,
     var: &Arc<str>,
@@ -621,10 +611,7 @@ fn reduce_fold(
     Box::new(out.into_iter())
 }
 
-// --- path-based mutation ----------------------------------------------------
 
-/// Resolve `expr` as a path-shape against `input`. Returns one or
-/// more concrete paths, each a sequence of String/Number steps.
 /// Errors on expression shapes that aren't path-like.
 pub(crate) fn paths_of_expr(
     expr: &Expr,
@@ -798,7 +785,6 @@ pub(crate) fn set_at_path(
             Ok(Value::Array(Arc::new(new_arr)))
         }
         (Value::Null, step) => {
-            // Auto-create the container that matches the next step.
             let empty = match step {
                 Value::String(_) => Value::Object(Arc::new(BTreeMap::new())),
                 Value::Number(_) => Value::Array(Arc::new(Vec::new())),
@@ -854,9 +840,8 @@ fn assign_eval(lhs: &Expr, op: AssignOp, rhs: &Expr, input: Value, env: &Env) ->
     };
     let mut current = input.clone();
     for path in paths {
-        // Update evaluates `rhs` against the path's current value;
-        // Set evaluates against the original input. Empty rhs stream
-        // skips the path, matching jq.
+        // Update: rhs sees the path's value. Set: rhs sees outer.
+        // Empty rhs stream skips the path.
         let target = match op {
             AssignOp::Update => get_at_path(&current, &path),
             AssignOp::Set => input.clone(),

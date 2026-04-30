@@ -43,7 +43,7 @@ pub fn build_tree_from_source(source: &str) -> Node {
 
 /// Build a tree from an event iterator without offsets. All spans
 /// come out `None`; use [`build_tree_from_source`] if the serializer
-/// needs to byte-copy clean subtrees.
+/// needs to copy clean subtrees verbatim.
 pub fn build_tree<'a, I: Iterator<Item = Event<'a>>>(events: I) -> Node {
     build(events.map(|e| (e, 0..0)))
 }
@@ -81,7 +81,6 @@ pub fn node_to_events_owned(node: &Node) -> Vec<Event<'static>> {
         .collect()
 }
 
-// ---- events to Node --------------------------------------------------------
 
 fn build<'a, I>(events: I) -> Node
 where
@@ -291,7 +290,6 @@ fn link_type_str(lt: LinkType) -> &'static str {
     }
 }
 
-// ---- Node to events --------------------------------------------------------
 
 fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
     use pulldown_cmark::{BlockQuoteKind, HeadingLevel as HL};
