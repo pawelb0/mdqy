@@ -380,6 +380,26 @@ fn as_binds_preceding_term_not_pipeline() {
     assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
 }
 
+/// `as $x` body should extend through subsequent pipes, matching jq.
+/// `EXPR as $x | a | b | c` reads as `EXPR as $x | (a | b | c)` so
+/// `$x` stays in scope across the whole rhs.
+#[test]
+fn as_body_extends_through_pipes() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(expr)
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null(r#""X" as $x | "Y" | $x"#), ["X"]);
+    assert_eq!(run_null("1 as $x | 2 as $y | $x + $y"), ["3"]);
+    assert_eq!(
+        run_null(r#""X" as $x | ["a","X","b"] | map(. == $x) | tojson"#),
+        ["[false,true,false]"],
+    );
+}
+
 /// `not` works as a 0-ary postfix filter (`EXPR | not`) and as a
 /// prefix unary (`not EXPR`), matching jq.
 #[test]

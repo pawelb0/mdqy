@@ -179,7 +179,8 @@ impl<'t, 's> Parser<'t, 's> {
     /// pipeline. So `pipe | term as $x | body` reads as
     /// `pipe | (term as $x | body)`. If `bind` arrived as a
     /// `Pipe(prefix, last)`, peel `last` off and re-attach `prefix`
-    /// outside the resulting `As`.
+    /// outside the resulting `As`. The body extends through any
+    /// remaining pipes so `$name` stays in scope across the rhs.
     fn parse_as_tail(&mut self, bind: Expr, allow_comma: bool) -> Result<Expr, CompileError> {
         self.advance();
         let Tok::DollarIdent(name) = self.peek().clone() else {
@@ -188,9 +189,9 @@ impl<'t, 's> Parser<'t, 's> {
         self.advance();
         self.expect(Tok::Pipe, "`|` after `as $name`")?;
         let body = if allow_comma {
-            self.parse_comma()?
+            self.parse_pipeline()?
         } else {
-            self.parse_alt()?
+            self.parse_pipeline_no_comma()?
         };
         let (prefix, last) = match bind {
             Expr::Pipe(l, r) => (Some(l), *r),
