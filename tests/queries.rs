@@ -400,6 +400,29 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// `any(f)` and `all(f)` should evaluate `f` per element and reduce
+/// with OR/AND. Regression: predicate was silently ignored, leaving
+/// truthy reduction of the raw items.
+#[test]
+fn any_all_apply_predicate() {
+    fn run_null(expr: &str) -> String {
+        render(
+            &compile(expr)
+                .run_with_env(Value::Null, mdqy::Env::default())
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+    }
+    assert_eq!(run_null("[1,2,3] | any(. > 2)"), "true");
+    assert_eq!(run_null("[1,2,3] | any(. > 99)"), "false");
+    assert_eq!(run_null("[1,2,3] | all(. > 0)"), "true");
+    assert_eq!(run_null("[1,2,3] | all(. > 1)"), "false");
+    // 0-arg form still does truthy reduction of items.
+    assert_eq!(run_null("[true, false] | any"), "true");
+    assert_eq!(run_null("[true, false] | all"), "false");
+}
+
 /// String slicing should work like jq: clamp by Unicode codepoint.
 #[test]
 fn string_slice_clamps_by_codepoint() {

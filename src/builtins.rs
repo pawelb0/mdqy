@@ -57,8 +57,8 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "keys" => one(keys_of(&input)),
         "add" => one(add_all(&input)),
         "not" => ok(Value::Bool(!input.truthy())),
-        "any" => one(reduce_bool(&input, |a, b| a || b, false)),
-        "all" => one(reduce_bool(&input, |a, b| a && b, true)),
+        "any" => any_or_all(args, input, env, true),
+        "all" => any_or_all(args, input, env, false),
         "reverse" => one(reverse_of(input)),
         "sort" => one(sort_of(input)),
         "unique" => one(unique_of(input)),
@@ -512,6 +512,50 @@ fn reduce_bool(
         Value::Null => Ok(Value::Bool(init)),
         other => Err(type_err("array", other)),
     }
+}
+
+/// `any` / `all`. Zero args: truthy reduction over the array.
+/// One arg: evaluate `f` per element and short-circuit on the first
+/// hit (any) or miss (all).
+fn any_or_all(args: &[Expr], input: Value, env: &Env, is_any: bool) -> Stream {
+    if args.is_empty() {
+        let combine: fn(bool, bool) -> bool = if is_any {
+            |a, b| a || b
+        } else {
+            |a, b| a && b
+        };
+        return one(reduce_bool(&input, combine, !is_any));
+    }
+    if args.len() != 1 {
+        return err(RunError::Other(
+            "any/all: expected 0 or 1 arguments".into(),
+        ));
+    }
+    let items: Vec<Value> = match input {
+        Value::Array(a) => (*a).clone(),
+        Value::Node(n) => n.children.clone(),
+        Value::Null => Vec::new(),
+        other => return err(type_err("array or node", &other)),
+    };
+    let mut acc = !is_any;
+    for v in items {
+        for r in eval::eval(&args[0], v, env) {
+            match r {
+                Ok(x) => {
+                    let t = x.truthy();
+                    if is_any && t {
+                        return ok(Value::Bool(true));
+                    }
+                    if !is_any && !t {
+                        return ok(Value::Bool(false));
+                    }
+                    acc = if is_any { acc || t } else { acc && t };
+                }
+                Err(e) => return err(e),
+            }
+        }
+    }
+    ok(Value::Bool(acc))
 }
 
 fn reverse_of(input: Value) -> Result<Value, RunError> {
