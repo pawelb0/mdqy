@@ -26,7 +26,7 @@ cat README.md | mdqy '.'
 
 Identity. Prints the file back, byte-for-byte.
 
-## Step 1. Pull something out
+## Pull something out
 
 The plaintext of each heading:
 
@@ -49,7 +49,7 @@ Fence language tags:
 mdqy 'codeblocks | .lang' README.md
 ```
 
-## Step 2. Filter
+## Filter
 
 Only H2s:
 
@@ -69,7 +69,7 @@ Only Rust code blocks:
 mdqy 'code:lang(rust) | .literal' README.md
 ```
 
-## Step 3. Drill into a section
+## Drill into a section
 
 ```sh
 mdqy '# Install' README.md
@@ -92,7 +92,7 @@ the left side picked. Nest it:
 mdqy '# Usage > ## "Query examples" > codeblocks:first | .literal' README.md
 ```
 
-## Step 4. Shape the output
+## Shape the output
 
 An object per heading:
 
@@ -116,7 +116,7 @@ mdqy 'reduce (codeblocks | .lang // "plain") as $l ({};
   setpath([$l]; (getpath([$l]) // 0) + 1))' README.md
 ```
 
-## Step 5. Switch output format
+## Switch output format
 
 ```sh
 mdqy --output json 'headings' README.md
@@ -137,17 +137,14 @@ mdqy '# Install' README.md | mdcat -
 mdqy '# Install' README.md | glow -
 ```
 
-Same result, slightly more typing.
-
-## Step 6. Many files at once
+## Many files at once
 
 ```sh
 mdqy 'headings | .text' docs/
 ```
 
 Pass a directory, and mdqy walks it recursively, honouring
-`.gitignore`, `.ignore`, and hidden-file rules (same mental model
-as `rg`).
+`.gitignore`, `.ignore`, and hidden-file rules.
 
 Tag results with their source path:
 
@@ -167,7 +164,7 @@ Collect all file roots into an array, then query once:
 mdqy --slurp '[.[] | headings | .text] | add' docs/
 ```
 
-## Step 7. Rewrite in place
+## Rewrite in place
 
 Preview first:
 
@@ -200,7 +197,7 @@ mdqy -U 'walk(if type == "image" then del(.title) else . end)' docs/
 Unchanged subtrees round-trip byte-for-byte. Only the mutated
 spans get regenerated. See [transforms.md](transforms.md) for why.
 
-## Step 8. Pipe into jq, ripgrep, whatever
+## Pipe into other tools
 
 JSON output flattens each Node's attributes next to `kind` and
 `children`, so standard jq pipelines work:
@@ -215,10 +212,7 @@ Raw output for shell loops:
 mdqy --raw 'headings | .text' docs/ | while read -r h; do echo "# $h"; done
 ```
 
-## What to read next
+## See also
 
-- [language.md](language.md): the full query language.
-- [selectors.md](selectors.md): `hN`, pseudos, `#`, `>`.
-- [transforms.md](transforms.md): the write path in detail.
-- [architecture.md](architecture.md): how mdqy fits together
-  internally.
+[language.md](language.md), [selectors.md](selectors.md),
+[transforms.md](transforms.md), [architecture.md](architecture.md).
