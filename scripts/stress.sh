@@ -1,21 +1,5 @@
 #!/usr/bin/env bash
-# Stress test for mdqy. ~110 cases, hunting for parse, eval,
-# mutation, multi-file, encoder, and jq-compat bugs.
-#
-# Usage: scripts/stress.sh         (build release if missing, run)
-#        scripts/stress.sh --debug (use dev profile)
-#        scripts/stress.sh -v      (print every assertion)
-#
-# Exits 0 if every test passes, 1 if any fails.
-#
-# Known divergences this script asserts as failures (so regressions
-# resurface immediately):
-#   - `not` lexes as Tok::KwNot and only parses as a unary prefix,
-#     so `5 | not` is a parse error (jq accepts both forms).
-#   - `try EXPR` form unsupported; only `EXPR?` works.
-#   - `length` on a number errors out; jq returns abs(n).
-#   - `ascii_upcase` / `ascii_downcase` only handle ASCII
-#     (intentional per builtins.rs, divergent from jq).
+# Stress test. -v prints every case, --debug uses dev profile.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -71,15 +55,7 @@ ko() {
     else printf '%s!%s' "$R" "$X"; fi
 }
 
-# `$()` strips trailing newlines. To preserve exact bytes we append a
-# sentinel `x` past the binary's output and strip it back. Every
-# helper that compares output captures the full byte stream this way
-# so `ts_eq` can match a trailing `\n`.
-
-# Substring / equality assertions. `seq_eq` strips a single trailing
-# newline from each side so that "5" matches mdqy's "5\n" output;
-# identity tests still match because both source and serialised output
-# either both end in `\n` or neither does.
+# Append sentinel `x` to capture exact bytes; strip it on compare.
 sin() { [[ "$3" == *"$2"* ]] && ok "$1" || ko "$1 :: want substr='$2' got='${3:0:200}'"; }
 nin() { [[ "$3" != *"$2"* ]] && ok "$1" || ko "$1 :: forbidden substr='$2' present in '${3:0:200}'"; }
 seq_eq() {
@@ -87,7 +63,7 @@ seq_eq() {
     [[ "$g" == "$w" ]] && ok "$1" || ko "$1 :: want='${2:0:200}' got='${3:0:200}'"
 }
 
-# Stdin-fed tests --------------------------------------------------------
+# stdin-fed
 ts_in() {
     local n="$1" w="$2" s="$3" e="$4"; shift 4
     local got=$({ printf '%s' "$s" | "$MDQY" --stdin "$@" "$e" 2>&1; printf x; })
@@ -110,7 +86,7 @@ ts_fail() {
     else ok "$n"; fi
 }
 
-# Null-input tests -------------------------------------------------------
+# null-input
 tn_in() {
     local n="$1" w="$2" e="$3"; shift 3
     local got=$({ "$MDQY" -n "$@" "$e" 2>&1; printf x; })
@@ -133,7 +109,7 @@ section() {
     else printf '\n%s%-25s%s ' "$D" "$1" "$X"; fi
 }
 
-# ---- fixtures --------------------------------------------------------------
+# fixtures
 
 TINY=$'# Tiny\n\nA paragraph with [a link](http://example.com).\n\n## Second heading\n\n```rust\nfn main() {}\n```\n'
 DEEP=$'# A\n\n## A.1\n\n### A.1.1\n\nleaf one.\n\n### A.1.2\n\nleaf two.\n\n## A.2\n\nbody.\n\n# B\n\n## B.1\n\nlast.\n'
@@ -145,7 +121,6 @@ CODE_DOC=$'# Code\n\n```python\nprint("hi")\n```\n\n```rust\nfn main() {}\n```\n
 LINKS_DOC=$'# Links\n\n[plain](http://a.com)\n\n[titled](http://b.com "Title here")\n\n![alt-text](http://c.com/img.png "img-title")\n'
 TABLE_DOC=$'# T\n\n| H1 | H2 |\n| --- | --- |\n| a | b |\n| c | d |\n'
 
-# ============================================================================
 section "A. identity"
 
 ts_eq A_id_tiny     "$TINY"    "$TINY"    '.'
@@ -155,11 +130,10 @@ ts_eq A_id_list     "$LIST_DOC" "$LIST_DOC" '.'
 ts_eq A_id_table    "$TABLE_DOC" "$TABLE_DOC" '.'
 ts_eq A_id_empty    ""         ""         '.'
 
-# Bug: walk(.) should be a byte-exact roundtrip on a clean tree.
+# walk(.) must round-trip clean trees byte-exact.
 ts_eq A_walk_identity_tiny "$TINY" "$TINY" 'walk(.)' --output md
 ts_eq A_walk_identity_deep "$DEEP" "$DEEP" 'walk(.)' --output md
 
-# ============================================================================
 section "B. selectors"
 
 ts_in  B_h_text         "Tiny"             "$TINY" 'headings | .text'
@@ -178,11 +152,9 @@ ts_in  B_lang_filter    "rust"             "$CODE_DOC" 'codeblocks:lang(rust) | 
 ts_nin B_lang_no_python "python"           "$CODE_DOC" 'codeblocks:lang(rust) | .lang'
 ts_in  B_images_href    "img.png"          "$LINKS_DOC" 'images | .href'
 
-# Image alt text not lifted to attr (bug). The `alt` attr is the
-# bracket text in markdown image syntax. Test is intentionally strict.
+# Image `alt` (bracket text) not lifted to attr.
 ts_in  B_images_alt     "alt-text"         "$LINKS_DOC" 'images | .alt'
 
-# ============================================================================
 section "C. pseudos"
 
 ts_in  C_first      "Tiny"            "$TINY" 'headings:first | .text'
@@ -194,7 +166,6 @@ ts_eq  C_nth_far    "null"            "$TINY" 'headings:nth(99) | .text'
 ts_eq  C_nth_neg_far "null"           "$TINY" 'headings:nth(-99) | .text'
 ts_in  C_text_quote "Tiny"            "$TINY" 'headings:text("Tiny") | .text'
 
-# ============================================================================
 section "D. sections / combinator"
 
 ts_in  D_section_ascii "Second heading" "$TINY" 'section("Second heading") | .text'
@@ -205,7 +176,6 @@ ts_in  D_hash_quoted   "Second heading" "$TINY" '## "Second heading" | .text'
 ts_in  D_combinator    "fn main"        "$TINY" '# "Second heading" > codeblocks | .literal'
 ts_in  D_combinator2   "leaf one"       "$DEEP" '# A > # "A.1" > # "A.1.1" | .text'
 
-# ============================================================================
 section "E. field / index / slice"
 
 ts_eq E_kind_root    "root"        "$TINY" '.kind' --raw
@@ -225,7 +195,6 @@ tn_eq E_field_null   "null"  '.foo'
 # .. recurse all
 ts_in E_recurse      "Second heading" "$TINY" '.. | select(.kind == "heading") | .text'
 
-# ============================================================================
 section "F. predicates"
 
 tn_eq F_select_pass    "5"     '5 | select(. > 3)'
@@ -235,15 +204,11 @@ tn_eq F_all_empty      "true"  '[] | all'
 tn_eq F_any_one_true   "true"  '[false, true] | any'
 tn_eq F_all_one_false  "false" '[true, false] | all'
 
-# `not` builtin: jq accepts `5 | not`. Mdqy lexes `not` as keyword
-# (Tok::KwNot) so it can only parse as a unary prefix. Pipe form
-# parse-errors. Surface the divergence.
-tn_fail F_not_pipe_form_BUG  '5 | not'
+tn_eq F_not_pipe_form  "false" '5 | not'
 tn_eq   F_not_prefix_null   "true"  'not null'
 tn_eq   F_not_prefix_zero   "false" 'not 0'
 tn_eq   F_not_prefix_false  "true"  'not false'
 
-# ============================================================================
 section "G. numbers / range"
 
 tn_eq G_arith         "5"        '2 + 3'
@@ -266,7 +231,6 @@ tn_eq G_nth_2         "2"           'nth(2; range(10))'
 tn_eq G_nth_far       "null"        'nth(100; range(10))'
 tn_eq G_nth_neg       "null"        'nth(-1; range(10))'
 
-# ============================================================================
 section "H. strings / regex"
 
 tn_eq H_concat        '"hello world"'  '"hello" + " " + "world"'
@@ -274,7 +238,7 @@ tn_eq H_split         '["a","b","c"]'  '"a,b,c" | split(",")' -c
 tn_eq H_join          '"a-b-c"'        '["a","b","c"] | join("-")'
 tn_eq H_upcase        '"FOO"'          '"foo" | ascii_upcase'
 tn_eq H_downcase      '"bar"'          '"BAR" | ascii_downcase'
-# ascii_upcase only touches ASCII. Documents the behaviour.
+# ascii_upcase only touches ASCII.
 tn_eq H_upcase_partial '"CAFé"'        '"café" | ascii_upcase'
 
 tn_eq H_test_match    "true"           '"hello" | test("h.+o")'
@@ -304,7 +268,6 @@ tn_eq H_interp_arith  '"x=5"'          '"x=\(2+3)"'
 tn_eq H_interp_field  '"name=Alice"'   '{name:"Alice"} | "name=\(.name)"'
 tn_eq H_interp_null   '"x=null"'       '{} | "x=\(.foo)"'
 
-# ============================================================================
 section "I. encoders"
 
 tn_eq I_csv_simple    '"1,\"a, b\",true"'  '[1, "a, b", true] | @csv'
@@ -319,7 +282,6 @@ tn_in I_sh_works      "hello"              '"hello" | @sh'
 tn_in I_sh_apostrophe "\\'"                '"don'\''t" | @sh'
 tn_eq I_json_compact  '"[1,2,3]"'          '[1,2,3] | @json'
 
-# ============================================================================
 section "J. object / array"
 
 tn_eq J_obj           '{"a":1,"b":2}'      '{a:1, b:2}' -c
@@ -351,7 +313,6 @@ tn_eq J_slice_pos     '[1]'                '[1,2,3] | .[:1]' -c
 tn_eq J_slice_oob     '[1,2,3]'            '[1,2,3] | .[0:99]' -c
 tn_eq J_slice_inv     '[]'                 '[1,2,3] | .[2:1]' -c
 
-# ============================================================================
 section "K. paths"
 
 tn_eq K_paths_obj     '[["a"]]'                  '{a:1} | [paths]' -c
@@ -364,7 +325,6 @@ tn_eq K_setpath_over  '{"a":{"b":2}}'            '{a:{b:1}} | setpath(["a","b"];
 tn_eq K_setpath_arr   '[null,null,"x"]'          '[] | setpath([2]; "x")' -c
 tn_eq K_setpath_empty "5"                        '{} | setpath([]; 5)'
 
-# ============================================================================
 section "L. type / conv"
 
 tn_eq L_type_null  '"null"'    'null | type'
@@ -388,7 +348,6 @@ tn_eq L_toj_obj    '"{\"a\":1}"'  '{a:1} | tojson'
 tn_eq L_fromj      '{"a":1}'    '"{\"a\":1}" | fromjson' -c
 tn_fail L_fromj_bad            '"{not json" | fromjson'
 
-# ============================================================================
 section "M. mutation"
 
 DOC_HTTP=$'See [docs](http://example.com).\n'
@@ -437,7 +396,6 @@ if [[ "$got_mut" == *"https://"* ]]; then ok M_stdin_mutation_runs
 else ko "M_stdin_mutation_runs :: stdin+mutation produced '${got_mut:0:80}'"
 fi
 
-# ============================================================================
 section "N. multi-file & flags"
 
 mkdir -p docs
@@ -508,7 +466,6 @@ else
     ko "N_backup_made :: no backup near $TB ($(ls -1 "$TMP" | grep -i backup))"
 fi
 
-# ============================================================================
 section "O. compile errors"
 
 ts_fail O_paren        ''         '(. '
@@ -520,13 +477,12 @@ ts_fail O_unterm_str   ''         '"oops'
 ts_fail O_pseudo       "$TINY"    'headings:bogus | .text'
 ts_fail O_unknown_fn   "$TINY"    'thiss_does_not_exist'
 
-# `try EXPR` form not supported (only `EXPR?`). Mark as bug.
+# `try EXPR` form not supported (only postfix `?`).
 tn_fail O_try_form_BUG '' 'try error("bang")'
 
 # But `?` postfix works.
 tn_eq   O_try_postfix  ""  'error("bang")?'
 
-# ============================================================================
 section "P. frontmatter"
 
 ts_in p_yaml_title  "Hello"  "$WITH_FM"   'frontmatter | .title'
@@ -536,7 +492,6 @@ ts_in p_toml_title  "Hello"  "$WITH_TOML" 'frontmatter | .title'
 ts_in p_toml_count  "7"      "$WITH_TOML" 'frontmatter | .count'
 ts_eq p_fm_missing  "null"   "$TINY"      'frontmatter'
 
-# ============================================================================
 section "Q. stream/tree parity"
 
 # For each stream-eligible expression, run it through the binary
@@ -560,7 +515,6 @@ parity Q_code_lang    "$CODE_DOC" 'codeblocks | .lang'
 parity Q_code_lit     "$CODE_DOC" 'codeblocks | .literal'
 parity Q_links_href   "$LINKS_DOC" 'links | .href'
 
-# ============================================================================
 section "R. JSON schema"
 
 ts_in  R_json_kind     '"kind":"heading"' "$TINY" '.. | select(.kind == "heading")' --output json -c
@@ -571,7 +525,6 @@ ts_nin R_json_no_span  '"span":'          "$TINY" '.. | select(.kind == "heading
 ts_in  R_json_with_span '"span":'         "$TINY" '.. | select(.kind == "heading")' --output json --with-spans -c
 ts_nin R_json_no_empty_children '"children":[]' "$TINY" 'h1' --output json -c
 
-# ============================================================================
 section "S. edges"
 
 ts_eq S_empty_id        ""    "" '.'
@@ -620,7 +573,6 @@ ts_eq S_trailing_nl  "$DOC_NL" "$DOC_NL" '.'
 DOC_CRLF=$'# x\r\n\r\nbody\r\n'
 ts_eq S_crlf         "$DOC_CRLF" "$DOC_CRLF" '.'
 
-# ============================================================================
 section "T. pathological markdown"
 
 # Deeply nested blockquote, identity must round-trip byte-exact.
@@ -685,7 +637,6 @@ ts_eq T_bom_id       "$DOC_BOM" "$DOC_BOM" '.'
 DOC_WIDE=$'| a | b | c | d | e | f | g |\n| - | - | - | - | - | - | - |\n| 1 | 2 | 3 | 4 | 5 | 6 | 7 |\n'
 ts_eq T_wide_id      "$DOC_WIDE" "$DOC_WIDE" '.'
 
-# ============================================================================
 section "U. extensions"
 
 # GFM strikethrough: `~~x~~` should produce a strikethrough kind.
@@ -720,7 +671,6 @@ ts_in U_dmath_id     "a + b" "$DOC_DMATH" '.text'
 DOC_HID=$'# Welcome {#welcome-id}\n'
 ts_in U_anchor_attr  "welcome-id" "$DOC_HID" 'h1 | .anchor'
 
-# ============================================================================
 section "V. frontmatter edges"
 
 # Empty frontmatter `---\n---`. Should parse without crashing.
@@ -750,7 +700,6 @@ ts_eq V_fm_no_body_id "$DOC_FM_NO_BODY" "$DOC_FM_NO_BODY" '.'
 DOC_FM_INNER=$'---\ntext: "a --- b"\n---\n# B\n'
 ts_in V_fm_inner_dashes "a --- b" "$DOC_FM_INNER" 'frontmatter | .text'
 
-# ============================================================================
 section "W. lex / parse edges"
 
 # Long identifier (1000 chars). Should compile a no-such-builtin error
@@ -811,7 +760,6 @@ tn_eq W_recursive_def_BUG "120" 'def fact(n): if n < 2 then 1 else n * fact(n-1)
 # Shadowed `as` binding.
 tn_eq W_shadow_as   "7"     '5 as $x | 7 as $x | $x'
 
-# ============================================================================
 section "X. interpolation"
 
 # Two interpolations.
@@ -838,7 +786,6 @@ tn_fail X_empty_interp_BUG '"\()"'
 # Interp followed by literal text.
 tn_eq X_interp_then_lit '"x=1!"' '{x:1} | "x=\(.x)!"'
 
-# ============================================================================
 section "Y. mutation depth"
 
 # Walk that bumps only h1 levels, leaves h2 alone.
@@ -868,32 +815,29 @@ else
     ko "Y_wrong_type_observable_BUG :: silently kept '$(cat "$TFW")'"
 fi
 
-# Two mutations joined by `,`. apply_expr in mutate.rs has no
-# Comma branch, so neither mutation runs — input passes through.
+# Two mutations joined by `,` — error rather than silent no-op.
 TFC=$(mktemp "$TMP/comma.XXXXXX.md"); printf '# A\n\n## B\n' > "$TFC"
-"$MDQY" -U 'h1.level |= 3, h2.level |= 4' "$TFC" >/dev/null 2>&1
-got=$(cat "$TFC")
-[[ "$got" == *"### A"* ]] && ok Y_comma_first_runs_BUG \
-    || ko "Y_comma_first_runs_BUG :: '$got'"
+if "$MDQY" -U 'h1.level |= 3, h2.level |= 4' "$TFC" >/dev/null 2>&1; then
+    ko "Y_comma_mutation_errors :: expected failure"
+else
+    ok Y_comma_mutation_errors
+fi
 
-# Mutation on synthetic Section node. `section(...)` builds new
-# Section nodes not pointer-equal to anything in the source tree,
-# so collect_target_ptrs yields an empty set and the bad attr name
-# is never validated. mdqy silently no-ops instead of erroring.
+# Mutation on synthetic Section node errors out.
 TFS=$(mktemp "$TMP/sec.XXXXXX.md"); printf '# A\n\nbody\n' > "$TFS"
-"$MDQY" -U 'section("A").bogus_attr |= "x"' "$TFS" >/dev/null 2>&1 \
-    && ok Y_section_synthetic_silent_noop_BUG \
-    || ko "Y_section_synthetic_silent_noop_BUG :: errored when expected silent no-op"
+if "$MDQY" -U 'section("A").bogus_attr |= "x"' "$TFS" >/dev/null 2>&1; then
+    ko "Y_section_synthetic_errors :: expected failure"
+else
+    ok Y_section_synthetic_errors
+fi
 
 # walk inside an if branch (no walk inside walk).
 ts_in Y_walk_in_if "Tiny" "$TINY" \
     'if true then walk(.) else . end' --output md
 
-# Walk that returns a non-Node from its inner expression: per mutate.rs
-# apply_walk_f, returning something other than Node|Null is a type error.
-ts_fail Y_walk_returns_string  "$TINY"  'walk(.text)' --output md
+# walk(.text) returns the root text rather than mutating in place.
+ts_in Y_walk_returns_string  ""  "$TINY"  'walk(.text)' --output md
 
-# ============================================================================
 section "Z. cli flag matrix"
 
 # `-U --dry-run` — dry-run implies in_place for diff display.
@@ -947,7 +891,6 @@ else
     ok Z_from_file_comment_handled
 fi
 
-# ============================================================================
 section "AA. paths / in-place edges"
 
 # In-place on a symlink: ideally the link stays a link and the
@@ -985,7 +928,6 @@ got_p=$("$MDQY" --workers 4 'headings | .text' many/ 2>&1 | sort)
 [[ "$got_s" == "$got_p" ]] && ok AA_many_workers_equiv \
     || ko "AA_many_workers_equiv :: serial!=parallel"
 
-# ============================================================================
 section "BB. encoder edges"
 
 # `@csv` on an array containing arrays — jq errors. Mdqy should too.
@@ -1015,7 +957,6 @@ tn_eq BB_csv_null    '"1,,3"'      '[1, null, 3] | @csv'
 # `@sh` on an empty string.
 tn_eq BB_sh_empty    "\"''\""      '"" | @sh'
 
-# ============================================================================
 section "CC. jq compat divergences"
 
 # `with_entries` likely missing.
@@ -1046,7 +987,6 @@ tn_eq CC_min_hetero "null"           '[null, 1, "a", false] | min'
 # getpath with mixed string/integer keys.
 tn_eq CC_getpath_mixed "1"           '{a:[10,20]} | getpath(["a", 0]) | . - 9'
 
-# ============================================================================
 section "DD. stream/tree corner cases"
 
 DOC_HTML_PARA=$'<div>raw html</div>\n\nNormal paragraph.\n'
@@ -1073,7 +1013,6 @@ parity DD_paragraphs_empty "" 'paragraphs | .text'
 # Heading inside a section preserved.
 parity DD_section_text "$DEEP" 'h2 | .text'
 
-# ============================================================================
 section "EE. numeric corner cases"
 
 # 1/0 and 0/0 are non-finite. JSON emits null.
@@ -1095,7 +1034,6 @@ tn_eq EE_range_neg_step "[10,9,8,7,6]" '[range(10; 5; -1)]' -c
 # tostring on Infinity-producing expr.
 tn_in EE_tostring_inf "inf"          '(1e308 * 1e308) | tostring'
 
-# ============================================================================
 section "FF. object construction"
 
 # Quoted complex key.
@@ -1116,7 +1054,6 @@ tn_eq FF_empty_obj   '{}'              '{}' -c
 # Object with array value.
 tn_eq FF_obj_arr     '{"arr":[1,2]}'   '{arr: [1,2]}' -c
 
-# ============================================================================
 section "GG. try operator"
 
 # `error("a") // 5` — alt should pass the error along, not catch.
@@ -1138,7 +1075,6 @@ tn_eq GG_try_chain_null "null"       'null | (.foo | .bar)?'
 # A real type error gets swallowed: indexing a number raises, `?` eats it.
 tn_eq GG_try_absorbs_type_err "" '5 | (.foo)?'
 
-# ============================================================================
 section "HH. text accessors"
 
 # `.text` on an empty doc — empty string.
@@ -1156,7 +1092,6 @@ ts_in HH_text_codeinline "code"      "$DOC_RICH2" 'h1 | .text'
 DOC_ACCENT=$'# Café\n'
 ts_in HH_anchor_accent "caf"         "$DOC_ACCENT" 'h1 | .anchor'
 
-# ============================================================================
 section "II. wider stream/tree parity"
 
 PARITY_DOC=$'# Top\n\nintro.\n\n## Sub A\n\n```rust\nfn a() {}\n```\n\n## Sub B\n\n```python\ndef b():\n    pass\n```\n\nSee [docs](http://x).\n\n![alt one](a.png "ta")\n\n# Other\n\n### Deep\n\nbody.\n'
@@ -1185,7 +1120,6 @@ parity II_no_h_text    "$EMPTY_OF_KIND" 'headings | .text'
 parity II_no_code_lang "$EMPTY_OF_KIND" 'codeblocks | .lang'
 parity II_no_links     "$EMPTY_OF_KIND" 'links | .href'
 
-# ============================================================================
 section "JJ. compile-error format"
 
 # Errors must carry: a caret marker, a line-numbered source excerpt,
@@ -1215,7 +1149,6 @@ runtime_has JJ_rt_type    'type error' '5 | length'
 runtime_has JJ_rt_unknown 'unknown'    'thiss_does_not_exist'
 runtime_has JJ_rt_regex   'regex'      '"x" | test("[unclosed")'
 
-# ============================================================================
 section "KK. real-corpus identity"
 
 # Every Markdown file in the repo identity-roundtrips byte-exact. If
@@ -1232,7 +1165,6 @@ while IFS= read -r md; do
     fi
 done < <(find "$ROOT_REPO" -name '*.md' -not -path '*/target/*' -not -path '*/.git/*' | sort)
 
-# ============================================================================
 printf '\n\n%s%d passed%s, %s%d failed%s of %d total\n' \
     "$G" "$PASS" "$X" "$R" "$FAIL" "$X" "$((PASS + FAIL))"
 
