@@ -400,6 +400,25 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// `a // b` should emit `b` once if `a` produces no non-null/non-false
+/// values. Regression: empty LHS produced no output at all; multiple
+/// null/false LHS values produced multiple `b` copies.
+#[test]
+fn alt_operator_falls_back_on_empty() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(expr)
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null("empty // 5"), ["5"]);
+    assert_eq!(run_null("(null, null) // 5"), ["5"]);
+    assert_eq!(run_null("(null, false) // 5"), ["5"]);
+    assert_eq!(run_null("1 // 5"), ["1"]);
+    assert_eq!(run_null("(1, null, 2) // 5"), ["1", "2"]);
+}
+
 /// `paths(f)` should return only paths whose value satisfies `f`.
 /// Regression: predicate was silently ignored, returning all paths.
 #[test]

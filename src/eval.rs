@@ -414,6 +414,27 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
     let env = env.clone();
     let r = r.clone();
     let outer = input.clone();
+    if matches!(op, BinOp::Alt) {
+        // jq spec: `a // b` emits the non-null/non-false outputs of
+        // `a`. If `a` yields none (empty stream or all null/false),
+        // emit `b` once against the original input.
+        let mut keep: Vec<Result<Value, RunError>> = Vec::new();
+        let mut had_truthy = false;
+        for x in eval(l, input, &env) {
+            match x {
+                Err(e) => return once(Err(e)),
+                Ok(v) if !matches!(v, Value::Null | Value::Bool(false)) => {
+                    had_truthy = true;
+                    keep.push(Ok(v));
+                }
+                Ok(_) => {}
+            }
+        }
+        if had_truthy {
+            return Box::new(keep.into_iter());
+        }
+        return eval(&r, outer, &env);
+    }
     Box::new(eval(l, input, &env).flat_map(move |x| match x {
         Err(e) => once(Err(e)),
         Ok(lv) => {
@@ -427,13 +448,12 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
     }))
 }
 
-/// Decide on `and`/`or`/`//` from the LHS alone, or `None` to fall
-/// through and evaluate the RHS.
+/// Decide on `and`/`or` from the LHS alone, or `None` to fall through
+/// and evaluate the RHS.
 fn short_circuit(lv: &Value, op: BinOp) -> Option<Value> {
     match op {
         BinOp::And if !lv.truthy() => Some(Value::Bool(false)),
         BinOp::Or if lv.truthy() => Some(Value::Bool(true)),
-        BinOp::Alt if !matches!(lv, Value::Null | Value::Bool(false)) => Some(lv.clone()),
         _ => None,
     }
 }
