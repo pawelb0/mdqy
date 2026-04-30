@@ -4,8 +4,6 @@
 use mdqy::{parse, Query};
 use proptest::prelude::*;
 
-/// Random bytes from the alphabet that's most likely to confuse the
-/// lexer: punctuation, escapes, and a few letters and digits.
 fn lex_garbage_strategy() -> impl Strategy<Value = String> {
     proptest::collection::vec(
         prop_oneof![
@@ -49,8 +47,6 @@ fn lex_garbage_strategy() -> impl Strategy<Value = String> {
     .prop_map(|chars| chars.into_iter().collect::<String>())
 }
 
-/// Concatenation of expression snippets. Mostly invalid grammar; the
-/// property is no-panic.
 fn expr_strategy() -> impl Strategy<Value = String> {
     let snippets: &[&str] = &[
         ".",
@@ -97,8 +93,7 @@ fn expr_strategy() -> impl Strategy<Value = String> {
         .prop_map(|parts| parts.join(" "))
 }
 
-/// Markdown built from heading / paragraph / fenced-code / hr blocks.
-/// Tables and lists are out: cmark round-trip drifts on those.
+// Tables and lists excluded — cmark round-trip drifts on those.
 fn clean_doc_strategy() -> impl Strategy<Value = String> {
     let block = prop_oneof![
         ("[a-zA-Z][a-zA-Z0-9 ]{0,30}", 1u8..=6)

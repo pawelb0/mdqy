@@ -32,7 +32,6 @@ fn strings(expr: &str) -> Vec<String> {
     run(expr).iter().map(render).collect()
 }
 
-/// Compile and run `expr` with `null` input; render every output.
 fn null_strings(expr: &str) -> Vec<String> {
     compile(expr)
         .run_with_env(Value::Null, mdqy::Env::default())
@@ -41,12 +40,10 @@ fn null_strings(expr: &str) -> Vec<String> {
         .collect()
 }
 
-/// Compile, run with `null` input, return the first output rendered.
 fn null_first(expr: &str) -> String {
     null_strings(expr).into_iter().next().expect("at least one output")
 }
 
-/// Run `expr | tojson` against null input and render every output.
 fn null_json(expr: &str) -> Vec<String> {
     null_strings(&format!("{expr} | tojson"))
 }
