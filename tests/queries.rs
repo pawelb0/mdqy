@@ -386,6 +386,20 @@ fn as_binds_preceding_term_not_pipeline() {
     assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
 }
 
+/// `split("")` should split into single characters, matching jq.
+#[test]
+fn split_empty_yields_characters() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null(r#""abc" | split("")"#), [r#"["a","b","c"]"#]);
+    assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
+}
+
 /// String slicing should work like jq: clamp by Unicode codepoint.
 #[test]
 fn string_slice_clamps_by_codepoint() {

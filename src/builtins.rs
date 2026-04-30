@@ -657,7 +657,11 @@ fn eval_string_arg(arg: Option<&Expr>, input: &Value, env: &Env) -> Result<Strin
 fn split(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
     let s = expect_string(input)?;
     let sep = eval_string_arg(args.first(), input, env)?;
-    let parts: Vec<Value> = s.split(sep.as_str()).map(Value::from).collect();
+    let parts: Vec<Value> = if sep.is_empty() {
+        s.chars().map(|c| Value::from(c.to_string())).collect()
+    } else {
+        s.split(sep.as_str()).map(Value::from).collect()
+    };
     Ok(Value::Array(Arc::new(parts)))
 }
 
