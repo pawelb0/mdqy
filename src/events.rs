@@ -42,8 +42,8 @@ pub fn build_tree_from_source(source: &str) -> Node {
 }
 
 /// Build a tree from an event iterator without offsets. All spans
-/// come out `None`; use [`build_tree_from_source`] if the serializer
-/// needs to copy clean subtrees verbatim.
+/// come out `None`; use [`build_tree_from_source`] for source-aware
+/// serialization.
 pub fn build_tree<'a, I: Iterator<Item = Event<'a>>>(events: I) -> Node {
     build(events.map(|e| (e, 0..0)))
 }

@@ -85,8 +85,7 @@ const KIND_NAMES: &[(&str, NodeKind)] = &[
     ("section", NodeKind::Section),
 ];
 
-/// Byte range into the parsed source. Used by the md serializer to
-/// copy clean subtrees verbatim.
+/// Byte range into the parsed source.
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct Span {

@@ -1,5 +1,5 @@
-//! Markdown write path. Eval mutates the tree; the serializer copies
-//! clean spans verbatim and regenerates dirty ones.
+//! Markdown write path. Eval mutates the tree; the serializer reuses
+//! clean spans and regenerates dirty ones.
 
 use std::sync::Arc;
 
