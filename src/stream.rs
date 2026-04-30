@@ -18,7 +18,7 @@ type StreamItem = Result<Value, RunError>;
 
 /// Run a stream-eligible query. `analyze::choose_mode` gates the
 /// dispatch; the `analyze::plan` call here re-derives the plan and
-/// fails loud if the two ever disagree.
+/// errors out if the two disagree.
 pub fn run<'a, I>(expr: Expr, events: I) -> Box<dyn Iterator<Item = StreamItem> + 'a>
 where
     I: Iterator<Item = Event<'a>> + 'a,

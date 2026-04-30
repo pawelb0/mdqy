@@ -43,37 +43,29 @@ pub(crate) struct FilterClosure {
 }
 
 impl Env {
-    /// Look up a `$x` binding.
     pub fn lookup(&self, name: &str) -> Option<&Value> {
         self.bindings.get(name)
     }
 
-    /// Look up a user-defined function by name.
     pub(crate) fn lookup_func(&self, name: &str) -> Option<Arc<UserFn>> {
         self.funcs.get(name).cloned()
     }
 
-    /// Look up a filter-typed parameter (a `def`'s argument).
     pub(crate) fn lookup_filter(&self, name: &str) -> Option<Arc<FilterClosure>> {
         self.filters.get(name).cloned()
     }
 
-    /// Bind `name` to `value`. Chainable for `--arg` / `--argjson` /
-    /// `as $x` rebinds.
     #[must_use]
     pub fn with(mut self, name: impl Into<String>, value: Value) -> Self {
         self.bindings.insert(name.into(), value);
         self
     }
 
-    /// Register a user function.
     pub(crate) fn with_func(mut self, name: &str, f: Arc<UserFn>) -> Self {
         self.funcs.insert(name.to_string(), f);
         self
     }
 
-    /// Bind a filter-typed parameter, capturing the env it should
-    /// evaluate against.
     pub(crate) fn with_filter(mut self, name: &str, closure: Arc<FilterClosure>) -> Self {
         self.filters.insert(name.to_string(), closure);
         self
@@ -82,18 +74,14 @@ impl Env {
 
 type Stream = Box<dyn Iterator<Item = Result<Value, RunError>>>;
 
-/// `a + b`. The `add` builtin folds with this.
 pub(crate) fn apply_add(a: &Value, b: &Value) -> Result<Value, RunError> {
     apply_bin(a, BinOp::Add, b)
 }
 
-/// Total order matching jq's `sort`/`unique`.
 pub(crate) fn value_cmp_for_sort(a: &Value, b: &Value) -> Ordering {
     value_cmp(a, b)
 }
 
-/// The dispatch. One match per [`Expr`] variant; helpers handle the
-/// cases that aren't one-liners.
 pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
     match expr {
         Expr::Identity => once(Ok(input)),
@@ -307,8 +295,7 @@ fn iterate(input: Value) -> Stream {
     }
 }
 
-/// Direct children of `v`. Shared by `.[]` and `..`. Scalars return
-/// `None` so callers can pick their own "no children" behaviour.
+/// `None` for scalars; callers pick their own no-children behaviour.
 fn children_of(v: &Value) -> Option<Vec<Value>> {
     Some(match v {
         Value::Array(a) => (**a).clone(),
@@ -330,8 +317,6 @@ fn eval_int(expr: Option<&Expr>, input: &Value, env: &Env) -> Result<Option<i64>
 
 // --- compare / binary -------------------------------------------------------
 
-/// Comparison: evaluate both sides, compare, emit a bool. No
-/// short-circuit.
 fn cmp_stream(l: &Expr, op: CmpOp, r: &Expr, input: Value, env: &Env) -> Stream {
     cross(l, r, input, env, move |lv, rv| {
         Ok(Value::Bool(match op {
@@ -345,7 +330,6 @@ fn cmp_stream(l: &Expr, op: CmpOp, r: &Expr, input: Value, env: &Env) -> Stream 
     })
 }
 
-/// Cross-product of two streams, combined via `f`.
 fn cross<F>(l: &Expr, r: &Expr, input: Value, env: &Env, f: F) -> Stream
 where
     F: Fn(Value, Value) -> Result<Value, RunError> + Clone + 'static,
@@ -392,8 +376,6 @@ fn type_rank(v: &Value) -> u8 {
     }
 }
 
-/// `l op r` as an `Expr::Bin`. Short-circuits `and`, `or`, and `//`
-/// so the RHS runs only when the LHS doesn't settle the result.
 fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream {
     let env = env.clone();
     let r = r.clone();
@@ -432,8 +414,6 @@ fn bin_stream(l: &Expr, op: BinOp, r: &Expr, input: Value, env: &Env) -> Stream 
     }))
 }
 
-/// Decide on `and`/`or` from the LHS alone, or `None` to fall through
-/// and evaluate the RHS.
 fn short_circuit(lv: &Value, op: BinOp) -> Option<Value> {
     match op {
         BinOp::And if !lv.truthy() => Some(Value::Bool(false)),
@@ -462,8 +442,6 @@ fn apply_bin(a: &Value, op: BinOp, b: &Value) -> Result<Value, RunError> {
     }
 }
 
-/// `a + b`. Numbers add, strings concat, arrays extend. Null on
-/// either side is identity.
 fn add(a: &Value, b: &Value) -> Result<Value, RunError> {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => Ok(Value::Number(x + y)),
