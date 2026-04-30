@@ -174,6 +174,12 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     /// Parse `bind as $name | body`. `bind` already consumed.
+    ///
+    /// `as` binds the immediately preceding term, not the whole
+    /// pipeline. So `pipe | term as $x | body` reads as
+    /// `pipe | (term as $x | body)`. If `bind` arrived as a
+    /// `Pipe(prefix, last)`, peel `last` off and re-attach `prefix`
+    /// outside the resulting `As`.
     fn parse_as_tail(&mut self, bind: Expr, allow_comma: bool) -> Result<Expr, CompileError> {
         self.advance();
         let Tok::DollarIdent(name) = self.peek().clone() else {
@@ -186,10 +192,18 @@ impl<'t, 's> Parser<'t, 's> {
         } else {
             self.parse_alt()?
         };
-        Ok(Expr::As {
-            bind: Box::new(bind),
+        let (prefix, last) = match bind {
+            Expr::Pipe(l, r) => (Some(l), *r),
+            other => (None, other),
+        };
+        let as_expr = Expr::As {
+            bind: Box::new(last),
             name: Arc::from(name),
             body: Box::new(body),
+        };
+        Ok(match prefix {
+            Some(l) => Expr::Pipe(l, Box::new(as_expr)),
+            None => as_expr,
         })
     }
 

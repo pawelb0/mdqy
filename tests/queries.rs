@@ -333,6 +333,23 @@ fn node_constructor_round_trips_kind() {
     assert_eq!(render(&out[0]), "heading");
 }
 
+/// `as $x` should bind the immediately preceding term, not the whole
+/// pipeline. Regression: `2 | . as $x | select($x > 1)` used to greedy-
+/// absorb `2 | .` into the bind, leaving `outer` = the outer input.
+#[test]
+fn as_binds_preceding_term_not_pipeline() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(expr)
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null("2 | . as $x | select($x > 1)"), ["2"]);
+    assert_eq!(run_null("2 | (. as $x | select($x > 1))"), ["2"]);
+    assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
+}
+
 /// `not` works as a 0-ary postfix filter (`EXPR | not`) and as a
 /// prefix unary (`not EXPR`), matching jq.
 #[test]
