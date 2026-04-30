@@ -106,7 +106,7 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "nth" => one(nth(args, input, env)),
 
         // Paths.
-        "paths" => paths(input),
+        "paths" => paths(args, input, env),
         "getpath" => one(getpath(args, input, env)),
         "setpath" => one(setpath(args, input, env)),
 
@@ -1066,10 +1066,45 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
 
 /// `paths` streams every non-empty path into `input` as an array of
 /// keys/indices. Mirrors jq.
-fn paths(input: Value) -> Stream {
+fn paths(args: &[Expr], input: Value, env: &Env) -> Stream {
     let mut out = Vec::new();
     collect_paths(&input, Vec::new(), &mut out);
-    Box::new(out.into_iter().map(|p| Ok(Value::Array(Arc::new(p)))))
+    let mut keep: Vec<Vec<Value>> = Vec::with_capacity(out.len());
+    if args.is_empty() {
+        keep = out;
+    } else if args.len() == 1 {
+        for path in out {
+            let Some(v) = get_at_path(&input, &path) else {
+                continue;
+            };
+            match eval_first(&args[0], &v, env) {
+                Ok(Some(r)) if r.truthy() => keep.push(path),
+                Ok(_) => {}
+                Err(e) => return err(e),
+            }
+        }
+    } else {
+        return err(RunError::Other("paths: expected 0 or 1 arguments".into()));
+    }
+    Box::new(keep.into_iter().map(|p| Ok(Value::Array(Arc::new(p)))))
+}
+
+fn get_at_path(input: &Value, path: &[Value]) -> Option<Value> {
+    let mut cur = input.clone();
+    for step in path {
+        cur = match (&cur, step) {
+            (Value::Array(a), Value::Number(n)) => {
+                let i = *n as i64;
+                if i < 0 || (i as usize) >= a.len() {
+                    return None;
+                }
+                a[i as usize].clone()
+            }
+            (Value::Object(m), Value::String(k)) => m.get(k.as_ref())?.clone(),
+            _ => return None,
+        };
+    }
+    Some(cur)
 }
 
 fn collect_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {

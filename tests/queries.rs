@@ -400,6 +400,27 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// `paths(f)` should return only paths whose value satisfies `f`.
+/// Regression: predicate was silently ignored, returning all paths.
+#[test]
+fn paths_filter_applies_predicate() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(
+        run_null("{a: {b: 1}, c: 2} | [paths(. == 1)]"),
+        [r#"[["a","b"]]"#],
+    );
+    assert_eq!(
+        run_null("{a: {b: 1}, c: 2} | [paths(type == \"number\")]"),
+        [r#"[["a","b"],["c"]]"#],
+    );
+}
+
 /// Comparison operators chain left-to-right, matching jq.
 /// `1 < 2 == true` parses as `(1 < 2) == true` and is `true`.
 #[test]
