@@ -75,7 +75,7 @@ the stream runner can't handle correctly must fall back. The
 differential test in `tests/queries.rs` keeps both runners in
 sync.
 
-## Byte-exact round-trip
+## Spans and dirty bits
 
 `Node::span` is `Option<Span>`. It's `Some` for anything parsed
 from the buffer and `None` for anything synthesised (`node(...)`,
