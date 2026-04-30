@@ -1,7 +1,8 @@
 # mdqy
 
-jq for markdown. Query markdown documents with a hybrid selector +
-jq-style DSL. Rewrite them in place. Pretty render to a terminal.
+jq for markdown — query markdown documents through a hybrid
+selector + jq-style DSL, rewrite them in place, and render to a
+terminal.
 
 ![demo](examples/demo.gif)
 
@@ -63,7 +64,7 @@ honour `.gitignore`, `.ignore`, and hidden-file rules.
 ### Query examples
 
 ```sh
-mdqy '.' README.md                       # identity, byte-exact
+mdqy '.' README.md                       # identity, exact passthrough
 mdqy 'headings | .text' README.md        # each heading, plaintext
 mdqy 'headings | select(.level == 1) | .text' docs/
 mdqy 'h1:first | .text' README.md        # first H1

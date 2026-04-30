@@ -194,8 +194,8 @@ Strip image titles across a docs tree:
 mdqy -U 'walk(if type == "image" then del(.title) else . end)' docs/
 ```
 
-Unchanged subtrees round-trip byte-for-byte. Only the mutated
-spans get regenerated. See [transforms.md](transforms.md) for why.
+Unchanged regions of the file are preserved verbatim; only the
+mutated spans regenerate. See [transforms.md](transforms.md).
 
 ## Pipe into other tools
 
