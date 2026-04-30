@@ -220,7 +220,7 @@ pub fn run() -> anyhow::Result<()> {
     if args.stdin {
         let mut buf = String::new();
         io::Read::read_to_string(&mut io::stdin(), &mut buf)?;
-        if !query.is_read_only() && !args.raw_input {
+        if (args.in_place || args.dry_run) && !args.raw_input {
             let new_bytes = query
                 .transform_bytes(buf.as_bytes())
                 .map_err(|e| anyhow::anyhow!("transform: {e}"))?;
@@ -242,7 +242,7 @@ pub fn run() -> anyhow::Result<()> {
         );
     }
 
-    if args.in_place || args.dry_run || !query.is_read_only() {
+    if args.in_place || args.dry_run {
         for path in &inputs {
             run_transform(&query, path, &args, &mut stdout)?;
         }

@@ -50,6 +50,21 @@ fn slurp_binds_array_of_roots() {
         .stdout(predicate::str::contains("1"));
 }
 
+/// Without `-U` or `--dry-run`, mutation expressions don't modify
+/// the input file. The CLI runs eval (not `transform_bytes`), so
+/// disk state is untouched even when the expression contains `|=`,
+/// `del`, or `walk`.
+#[test]
+fn no_in_place_flag_leaves_file_untouched() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    fs::write(tmp.path(), b"# Hi\n").unwrap();
+    let before = fs::read(tmp.path()).unwrap();
+    let _ = mdqy()
+        .args([".level |= 99", tmp.path().to_str().unwrap()])
+        .assert();
+    assert_eq!(fs::read(tmp.path()).unwrap(), before);
+}
+
 #[test]
 fn dry_run_prints_diff_does_not_write() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
