@@ -333,6 +333,25 @@ fn node_constructor_round_trips_kind() {
     assert_eq!(render(&out[0]), "heading");
 }
 
+/// `not` works as a 0-ary postfix filter (`EXPR | not`) and as a
+/// prefix unary (`not EXPR`), matching jq.
+#[test]
+fn not_works_as_prefix_and_postfix() {
+    fn run_null(expr: &str) -> String {
+        render(
+            &compile(expr)
+                .run_with_env(Value::Null, mdqy::Env::default())
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+    }
+    assert_eq!(run_null("null | true | not"), "false");
+    assert_eq!(run_null("null | false | not"), "true");
+    assert_eq!(run_null("null | (1 == 1) | not"), "false");
+    assert_eq!(run_null("not true"), "false");
+}
+
 /// `>` combinator scopes into the current heading's section and
 /// doesn't hijack the `>` comparison operator.
 #[test]

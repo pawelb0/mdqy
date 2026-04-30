@@ -275,13 +275,24 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, CompileError> {
-        let wrap: fn(Box<Expr>) -> Expr = match self.peek() {
-            Tok::Minus => Expr::Neg,
-            Tok::KwNot => Expr::Not,
-            _ => return self.parse_postfix(),
-        };
-        self.advance();
-        Ok(wrap(Box::new(self.parse_unary()?)))
+        match self.peek() {
+            Tok::Minus => {
+                self.advance();
+                Ok(Expr::Neg(Box::new(self.parse_unary()?)))
+            }
+            Tok::KwNot => {
+                self.advance();
+                if is_operand_start(self.peek()) {
+                    Ok(Expr::Not(Box::new(self.parse_unary()?)))
+                } else {
+                    Ok(Expr::Call {
+                        name: Arc::from("not"),
+                        args: Vec::new(),
+                    })
+                }
+            }
+            _ => self.parse_postfix(),
+        }
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, CompileError> {
@@ -752,6 +763,30 @@ impl<'t, 's> Parser<'t, 's> {
 
 fn describe(tok: &Tok<'_>) -> String {
     format!("{tok:?}")
+}
+
+/// Tokens that begin an operand expression. Used by `parse_unary`
+/// to decide whether `not` is the prefix unary or the 0-ary filter.
+fn is_operand_start(tok: &Tok<'_>) -> bool {
+    matches!(
+        tok,
+        Tok::Dot
+            | Tok::DotDot
+            | Tok::LParen
+            | Tok::LBracket
+            | Tok::LBrace
+            | Tok::Str(_)
+            | Tok::Num(_)
+            | Tok::KwTrue
+            | Tok::KwFalse
+            | Tok::KwNull
+            | Tok::DollarIdent(_)
+            | Tok::Ident(_)
+            | Tok::KwIf
+            | Tok::Hash(_)
+            | Tok::Minus
+            | Tok::KwNot
+    )
 }
 
 /// Recognise tokens that open a selector segment. Used by the `>`
