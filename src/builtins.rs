@@ -6,6 +6,7 @@
 //! `gsub`, ...) match the jq spec across every Value variant.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use regex::Regex;
@@ -114,6 +115,7 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
         "toc" => one(Ok(toc(&input))),
         "frontmatter" => one(Ok(frontmatter(&input))),
         "node" => one(build_node(args, input, env)),
+        "walk" => walk_call(args, input, env),
 
         _ => return None,
     })
@@ -1290,4 +1292,99 @@ fn heading_to_entry(node: Arc<Node>) -> Value {
         obj.insert("anchor".into(), a);
     }
     Value::Object(Arc::new(obj))
+}
+
+/// `walk(f)` recursively applies `f` to every value in the input,
+/// bottom-up. Mirrors jq's stdlib `def walk(f): ...` but handles
+/// `Value::Node` by walking children and preserving Arc identity for
+/// untouched subtrees so the byte-exact serialiser keeps clean spans.
+fn walk_call(args: &[Expr], input: Value, env: &Env) -> Stream {
+    if args.len() != 1 {
+        return err(RunError::Other("walk/1: expected one argument".into()));
+    }
+    match walk_value(input, &args[0], env) {
+        Ok(v) => ok(v),
+        Err(e) => err(e),
+    }
+}
+
+fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
+    let inner = match &v {
+        Value::Array(a) => {
+            let mut new_arr: Vec<Value> = Vec::with_capacity(a.len());
+            let mut changed = false;
+            for c in a.iter() {
+                let new_c = walk_value(c.clone(), f, env)?;
+                if !value_id_eq(&new_c, c) {
+                    changed = true;
+                }
+                new_arr.push(new_c);
+            }
+            if changed {
+                Value::Array(Arc::new(new_arr))
+            } else {
+                v.clone()
+            }
+        }
+        Value::Object(m) => {
+            let mut new_map: BTreeMap<String, Value> = BTreeMap::new();
+            let mut changed = false;
+            for (k, val) in m.iter() {
+                let new_v = walk_value(val.clone(), f, env)?;
+                if !value_id_eq(&new_v, val) {
+                    changed = true;
+                }
+                new_map.insert(k.clone(), new_v);
+            }
+            if changed {
+                Value::Object(Arc::new(new_map))
+            } else {
+                v.clone()
+            }
+        }
+        Value::Node(n) => {
+            let mut new_children: Vec<Value> = Vec::with_capacity(n.children.len());
+            let mut changed = false;
+            for c in &n.children {
+                let new_c = walk_value(c.clone(), f, env)?;
+                if !value_id_eq(&new_c, c) {
+                    changed = true;
+                }
+                new_children.push(new_c);
+            }
+            if changed {
+                let mut new_node = (**n).clone();
+                new_node.children = new_children;
+                // Children changed; the original span no longer
+                // describes the right bytes. Dirty so the serialiser
+                // regenerates from events rather than copying source.
+                new_node.dirty = true;
+                Value::Node(Arc::new(new_node))
+            } else {
+                v.clone()
+            }
+        }
+        _ => v.clone(),
+    };
+    let result = eval::eval(f, inner.clone(), env)
+        .next()
+        .transpose()?
+        .ok_or_else(|| RunError::Other("walk: filter produced no output".into()))?;
+    if let (Value::Node(orig), Value::Node(after)) = (&inner, &result) {
+        if !Arc::ptr_eq(orig, after) && !after.dirty {
+            let mut clone = (**after).clone();
+            clone.dirty = true;
+            return Ok(Value::Node(Arc::new(clone)));
+        }
+    }
+    Ok(result)
+}
+
+fn value_id_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Node(x), Value::Node(y)) => Arc::ptr_eq(x, y),
+        (Value::Array(x), Value::Array(y)) => Arc::ptr_eq(x, y),
+        (Value::Object(x), Value::Object(y)) => Arc::ptr_eq(x, y),
+        _ => eval::value_cmp_for_sort(a, b).is_eq(),
+    }
 }

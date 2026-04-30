@@ -400,6 +400,27 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// `walk(f)` should run as a pure value transformation in eval.
+/// Recursive descent over Array/Object/Node/scalar; apply `f` at
+/// each value bottom-up.
+#[test]
+fn walk_runs_as_value_transformation() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(run_null("[1,2,3] | walk(if type == \"number\" then . + 100 else . end)"), ["[101,102,103]"]);
+    assert_eq!(
+        run_null("{a: 1, b: {c: 2}} | walk(if type == \"number\" then . + 10 else . end)"),
+        [r#"{"a":11,"b":{"c":12}}"#],
+    );
+    assert_eq!(run_null("5 | walk(. * 2)"), ["10"]);
+    assert_eq!(run_null("[1,2,3] | walk(.)"), ["[1,2,3]"]);
+}
+
 /// `a // b` should emit `b` once if `a` produces no non-null/non-false
 /// values. Regression: empty LHS produced no output at all; multiple
 /// null/false LHS values produced multiple `b` copies.
