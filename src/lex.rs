@@ -1,9 +1,4 @@
-//! Hand-rolled lexer. One pass, one `Vec<Spanned>` out.
-//!
-//! Tokens carry source byte offsets so the parser can point errors at
-//! the exact column. `Hash` and `ColonIdent` tokens are emitted for
-//! selector shortcuts (`# Title`, `:first`); the parser decides how
-//! to use them.
+//! Hand-rolled lexer. Tokens carry byte offsets for source-caret errors.
 
 use std::borrow::Cow;
 

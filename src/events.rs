@@ -1,16 +1,4 @@
-//! Convert between pulldown-cmark events and [`Node`] trees.
-//!
-//! Forward: [`build_tree_from_source`] runs the parser with byte
-//! offsets and folds events into a Node tree.
-//!
-//! Reverse: [`node_to_events_borrowed`] (used by the md serializer)
-//! and [`node_to_events_owned`] (used by the tty emitter) turn a
-//! subtree back into an event stream, so `pulldown-cmark-to-cmark`
-//! and `mdcat::push_tty` can consume it directly.
-//!
-//! [`options`] is the shared parse configuration. Matches
-//! `mdcat::markdown_options()` so rendering and querying agree on
-//! what the document is.
+//! pulldown-cmark events ↔ Node trees.
 
 use std::ops::Range;
 use std::sync::Arc;

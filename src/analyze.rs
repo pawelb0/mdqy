@@ -1,9 +1,8 @@
-//! Pick stream mode vs tree mode for a compiled expression.
+//! Stream-vs-tree dispatch.
 //!
-//! The stream predicate is narrow on purpose. Anything accepted here
-//! must also run correctly under tree mode, and
-//! `tests/queries.rs::stream_and_tree_agree` checks that exact
-//! property on every expression we label stream-eligible.
+//! The stream predicate must accept only expressions tree mode also
+//! handles correctly; `tests/queries.rs::stream_and_tree_agree`
+//! enforces that.
 
 use std::sync::Arc;
 

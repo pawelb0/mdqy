@@ -1,9 +1,4 @@
-//! Tree evaluator.
-//!
-//! Walks an [`Expr`] over a [`Value`] and yields a stream of results.
-//! This is the correctness baseline; [`crate::stream`] handles a
-//! narrow subset without allocating a Node tree and is checked
-//! against this implementation by `stream_and_tree_agree`.
+//! Tree evaluator. Correctness baseline for [`crate::stream`].
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

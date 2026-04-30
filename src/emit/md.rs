@@ -1,15 +1,6 @@
-//! Markdown serializer.
-//!
-//! Three paths:
-//!
-//! 1. Clean subtree with a span: byte-copy from the source buffer.
-//!    Fence style, list markers, blank lines, reference-link form
-//!    all survive. Nothing round-trips through the AST.
-//! 2. Dirty subtree with a span: replace that exact byte range with
-//!    bytes regenerated via `pulldown-cmark-to-cmark`. Normalisation
-//!    stays local to the mutated region.
-//! 3. No span (synthetic `Section`, `--merge` virtual root):
-//!    regenerate every child in order.
+//! Markdown serializer. Clean subtrees byte-copy from source; dirty
+//! ones go through `pulldown-cmark-to-cmark`; spanless roots
+//! regenerate child by child.
 
 use std::io;
 

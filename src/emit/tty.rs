@@ -1,10 +1,4 @@
-//! Render query results to a TTY through `mdcat::push_tty`.
-//! Feature-gated behind `tty`.
-//!
-//! Node results turn into a synthesised event stream and go straight
-//! into `push_tty`; no markdown serialisation, no re-parse. Non-Node
-//! values fall back to one line of text each, since mdcat speaks
-//! markdown and doesn't know about arbitrary jq values.
+//! TTY rendering via `mdcat::push_tty`. Feature-gated behind `tty`.
 
 use std::io;
 
