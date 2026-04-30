@@ -47,11 +47,9 @@ builds emit markdown or JSON.
 
 ## Documentation
 
-- [quickstart](docs/quickstart.md): tutorial walkthrough. Start here.
-- [language](docs/language.md): the jq-style query language.
-- [selectors](docs/selectors.md): `hN`, `:pseudos`, `#` sugar, the `>` combinator.
-- [transforms](docs/transforms.md): `|=`, `del`, `walk`, `-U`, `--dry-run`.
-- [architecture](docs/architecture.md): pipeline, modules, the two evaluators, byte-exact round-trip.
+Start with [docs/quickstart.md](docs/quickstart.md). Reference under
+[docs/](docs/): `language.md`, `selectors.md`, `transforms.md`,
+`architecture.md`.
 
 ## Usage
 
