@@ -88,7 +88,7 @@ redundant_closure_for_method_calls = "allow"
 match_same_arms = "allow"
 similar_names = "allow"
 too_many_lines = "allow"
-# Numeric conversions are deliberate and narrow (array indices, heading levels).
+# Numeric conversions kept for array indices and heading levels.
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_possible_wrap = "allow"

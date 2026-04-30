@@ -14,13 +14,11 @@ pass in the parser rewrites the CSS-ish forms (`h1:first`,
 `# Install`, `>`) into jq primitives. Everything downstream only
 knows about jq.
 
-At run time we pick one of two evaluators. `analyze::plan` inspects
-the `Expr` and, for a narrow class of heading-scoped read-only
-queries, compiles a `StreamPlan` that consumes pulldown events
-directly, without building a `Node` tree. Anything outside that
-predicate walks the `Node` tree through `eval::eval`. The
-differential test in `tests/queries.rs` asserts the two modes
-produce the same values for every stream-eligible expression.
+At run time mdqy picks one of two evaluators. `analyze::plan` looks
+at the `Expr` and, when it matches the heading-scoped read-only
+shape, compiles a `StreamPlan` that consumes pulldown events
+directly. Anything outside that shape walks the `Node` tree through
+`eval::eval`. `tests/queries.rs` runs both paths and compares.
 
 ## Values
 
@@ -70,10 +68,8 @@ evaluator optimises the common shallow read queries. Pulling every
 answer from the event iterator and stop.
 
 Anything mutating, recursive, cross-stream, or variable-binding
-falls back to tree mode. The predicate is conservative: a query
-the stream runner can't handle correctly must fall back. The
-differential test in `tests/queries.rs` keeps both runners in
-sync.
+falls back to tree mode. When in doubt, fall back. The differential
+test catches drift.
 
 ## Spans and dirty bits
 
@@ -90,10 +86,8 @@ The contract `emit::md` enforces:
 - Everything else: re-emit events via `node_to_events_borrowed` and
   hand them to `pulldown-cmark-to-cmark`.
 
-Dirt propagates upward during mutation (see `walk_and_update` in
-`mutate.rs`). A link-href rewrite dirties the link and every
-ancestor, but siblings stay clean and the serializer byte-copies
-them. Only the link's span regenerates.
+Dirt propagates upward during mutation. A link-href rewrite dirties
+the link and every ancestor, but siblings stay clean.
 
 ## The tty feature
 
