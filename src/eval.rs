@@ -686,17 +686,10 @@ pub(crate) fn paths_of_expr(
             }
             Ok(out)
         }
-        Expr::Iterate => match input {
-            Value::Array(a) => Ok((0..a.len())
-                .map(|i| vec![Value::from(i as i64)])
-                .collect()),
-            Value::Object(m) => Ok(m.keys().map(|k| vec![Value::from(k.clone())]).collect()),
-            Value::Node(n) => Ok((0..n.children.len())
-                .map(|i| vec![Value::from(i as i64)])
-                .collect()),
-            Value::Null => Ok(Vec::new()),
-            other => Err(type_err("iterable", other)),
-        },
+        Expr::Iterate => Ok(iter_path_steps(input)?
+            .into_iter()
+            .map(|s| vec![s])
+            .collect()),
         Expr::Pipe(a, b) => {
             let mut out = Vec::new();
             for p in paths_of_expr(a, input, env)? {
@@ -714,10 +707,7 @@ pub(crate) fn paths_of_expr(
             out.extend(paths_of_expr(b, input, env)?);
             Ok(out)
         }
-        Expr::Try(inner) => match paths_of_expr(inner, input, env) {
-            Ok(p) => Ok(p),
-            Err(_) => Ok(Vec::new()),
-        },
+        Expr::Try(inner) => Ok(paths_of_expr(inner, input, env).unwrap_or_default()),
         Expr::RecurseAll => {
             let mut out = Vec::new();
             collect_recurse_paths(input, Vec::new(), &mut out);
@@ -735,7 +725,26 @@ pub(crate) fn paths_of_expr(
     }
 }
 
-fn collect_recurse_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {
+/// One path step per child of `input`: numeric indices for arrays
+/// and node children, string keys for objects.
+fn iter_path_steps(input: &Value) -> Result<Vec<Value>, RunError> {
+    match input {
+        Value::Array(a) => Ok((0..a.len()).map(|i| Value::from(i as i64)).collect()),
+        Value::Object(m) => Ok(m.keys().map(|k| Value::from(k.clone())).collect()),
+        Value::Node(n) => Ok((0..n.children.len()).map(|i| Value::from(i as i64)).collect()),
+        Value::Null => Ok(Vec::new()),
+        other => Err(type_err("iterable", other)),
+    }
+}
+
+/// Resolve a possibly-negative index against `len`. Returns `None`
+/// when out of range.
+fn neg_index(i: i64, len: usize) -> Option<usize> {
+    let idx = if i < 0 { len as i64 + i } else { i };
+    (idx >= 0 && (idx as usize) < len).then_some(idx as usize)
+}
+
+pub(crate) fn collect_recurse_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {
     out.push(prefix.clone());
     match v {
         Value::Array(a) => {
@@ -771,26 +780,13 @@ pub(crate) fn get_at_path(input: &Value, path: &[Value]) -> Value {
                 m.get(k.as_ref()).cloned().unwrap_or(Value::Null)
             }
             (Value::Array(a), Value::Number(n)) => {
-                let i = *n as i64;
-                let idx = if i < 0 { a.len() as i64 + i } else { i };
-                if idx < 0 || idx as usize >= a.len() {
-                    Value::Null
-                } else {
-                    a[idx as usize].clone()
-                }
+                neg_index(*n as i64, a.len()).map_or(Value::Null, |i| a[i].clone())
             }
             (Value::Node(node), Value::String(k)) => attr::by_name(k.as_ref())
                 .and_then(|key| node.attrs.get(key).cloned())
                 .unwrap_or(Value::Null),
-            (Value::Node(node), Value::Number(n)) => {
-                let i = *n as i64;
-                let idx = if i < 0 { node.children.len() as i64 + i } else { i };
-                if idx < 0 || idx as usize >= node.children.len() {
-                    Value::Null
-                } else {
-                    node.children[idx as usize].clone()
-                }
-            }
+            (Value::Node(node), Value::Number(n)) => neg_index(*n as i64, node.children.len())
+                .map_or(Value::Null, |i| node.children[i].clone()),
             _ => return Value::Null,
         };
     }
@@ -817,15 +813,11 @@ pub(crate) fn set_at_path(
             Ok(Value::Node(Arc::new(new_node)))
         }
         (Value::Node(n), Value::Number(num)) => {
-            let i = *num as i64;
-            let idx = if i < 0 { n.children.len() as i64 + i } else { i };
-            if idx < 0 || idx as usize >= n.children.len() {
-                return Err(RunError::Other(format!("index {i} out of range")));
-            }
+            let idx = neg_index(*num as i64, n.children.len())
+                .ok_or_else(|| RunError::Other(format!("index {num} out of range")))?;
             let mut new_node = (*n).clone();
-            let current = new_node.children[idx as usize].clone();
-            let new_val = set_at_path(current, tail, value)?;
-            new_node.children[idx as usize] = new_val;
+            let current = new_node.children[idx].clone();
+            new_node.children[idx] = set_at_path(current, tail, value)?;
             new_node.dirty = true;
             Ok(Value::Node(Arc::new(new_node)))
         }
@@ -912,20 +904,17 @@ fn assign_eval(lhs: &Expr, op: AssignOp, rhs: &Expr, input: Value, env: &Env) ->
     };
     let mut current = input.clone();
     for path in paths {
-        let new_val = match op {
-            AssignOp::Update => {
-                let cur_val = get_at_path(&current, &path);
-                match eval(rhs, cur_val, env).next().transpose() {
-                    Ok(Some(v)) => v,
-                    Ok(None) => continue,
-                    Err(e) => return once(Err(e)),
-                }
-            }
-            AssignOp::Set => match eval(rhs, input.clone(), env).next().transpose() {
-                Ok(Some(v)) => v,
-                Ok(None) => continue,
-                Err(e) => return once(Err(e)),
-            },
+        // Update evaluates `rhs` against the path's current value;
+        // Set evaluates against the original input. Empty rhs stream
+        // skips the path, matching jq.
+        let target = match op {
+            AssignOp::Update => get_at_path(&current, &path),
+            AssignOp::Set => input.clone(),
+        };
+        let new_val = match eval(rhs, target, env).next().transpose() {
+            Ok(Some(v)) => v,
+            Ok(None) => continue,
+            Err(e) => return once(Err(e)),
         };
         current = match set_at_path(current, &path, new_val) {
             Ok(v) => v,

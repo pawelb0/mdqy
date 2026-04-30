@@ -883,7 +883,6 @@ fn format_html(input: &Value) -> Result<Value, RunError> {
 }
 
 fn env_as_value() -> Value {
-    use std::collections::BTreeMap;
     let map: BTreeMap<String, Value> = std::env::vars().map(|(k, v)| (k, Value::from(v))).collect();
     Value::Object(Arc::new(map))
 }
@@ -1070,66 +1069,26 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
 /// `paths` streams every non-empty path into `input` as an array of
 /// keys/indices. Mirrors jq.
 fn paths(args: &[Expr], input: Value, env: &Env) -> Stream {
-    let mut out = Vec::new();
-    collect_paths(&input, Vec::new(), &mut out);
-    let mut keep: Vec<Vec<Value>> = Vec::with_capacity(out.len());
-    if args.is_empty() {
-        keep = out;
+    let mut all = Vec::new();
+    eval::collect_recurse_paths(&input, Vec::new(), &mut all);
+    all.retain(|p| !p.is_empty());
+    let keep = if args.is_empty() {
+        all
     } else if args.len() == 1 {
-        for path in out {
-            let Some(v) = get_at_path(&input, &path) else {
-                continue;
-            };
+        let mut keep = Vec::with_capacity(all.len());
+        for path in all {
+            let v = eval::get_at_path(&input, &path);
             match eval_first(&args[0], &v, env) {
                 Ok(Some(r)) if r.truthy() => keep.push(path),
                 Ok(_) => {}
                 Err(e) => return err(e),
             }
         }
+        keep
     } else {
         return err(RunError::Other("paths: expected 0 or 1 arguments".into()));
-    }
+    };
     Box::new(keep.into_iter().map(|p| Ok(Value::Array(Arc::new(p)))))
-}
-
-fn get_at_path(input: &Value, path: &[Value]) -> Option<Value> {
-    let mut cur = input.clone();
-    for step in path {
-        cur = match (&cur, step) {
-            (Value::Array(a), Value::Number(n)) => {
-                let i = *n as i64;
-                if i < 0 || (i as usize) >= a.len() {
-                    return None;
-                }
-                a[i as usize].clone()
-            }
-            (Value::Object(m), Value::String(k)) => m.get(k.as_ref())?.clone(),
-            _ => return None,
-        };
-    }
-    Some(cur)
-}
-
-fn collect_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {
-    match v {
-        Value::Array(a) => {
-            for (i, child) in a.iter().enumerate() {
-                let mut p = prefix.clone();
-                p.push(Value::from(i as i64));
-                out.push(p.clone());
-                collect_paths(child, p, out);
-            }
-        }
-        Value::Object(m) => {
-            for (k, child) in m.iter() {
-                let mut p = prefix.clone();
-                p.push(Value::from(k.clone()));
-                out.push(p.clone());
-                collect_paths(child, p, out);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// `getpath(path)` walks an array of keys/indices into `input`.
@@ -1139,25 +1098,7 @@ fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
         Some(other) => return Err(type_err("array of keys", &other)),
         None => return Ok(Value::Null),
     };
-    let mut cur = input;
-    for step in path.iter() {
-        cur = match (&cur, step) {
-            (Value::Object(m), Value::String(k)) => {
-                m.get(k.as_ref()).cloned().unwrap_or(Value::Null)
-            }
-            (Value::Array(a), Value::Number(n)) => {
-                let i = *n as i64;
-                let idx = if i < 0 { a.len() as i64 + i } else { i };
-                if idx < 0 || idx as usize >= a.len() {
-                    Value::Null
-                } else {
-                    a[idx as usize].clone()
-                }
-            }
-            _ => Value::Null,
-        };
-    }
-    Ok(cur)
+    Ok(eval::get_at_path(&input, &path))
 }
 
 /// `setpath(path; value)` writes into a cloned `input`. Creates
@@ -1174,46 +1115,7 @@ fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let Some(value) = eval_first(&args[1], &input, env)? else {
         return Ok(input);
     };
-    set_path_inner(input, path.as_ref(), value)
-}
-
-fn set_path_inner(root: Value, path: &[Value], value: Value) -> Result<Value, RunError> {
-    let Some((head, tail)) = path.split_first() else {
-        return Ok(value);
-    };
-    match head {
-        Value::String(key) => {
-            use std::collections::BTreeMap;
-            let mut map: BTreeMap<String, Value> = match root {
-                Value::Object(m) => (*m).clone(),
-                Value::Null => BTreeMap::new(),
-                other => return Err(type_err("object or null", &other)),
-            };
-            let child = map.remove(key.as_ref()).unwrap_or(Value::Null);
-            let replaced = set_path_inner(child, tail, value)?;
-            map.insert(key.to_string(), replaced);
-            Ok(Value::Object(Arc::new(map)))
-        }
-        Value::Number(n) => {
-            let mut arr: Vec<Value> = match root {
-                Value::Array(a) => (*a).clone(),
-                Value::Null => Vec::new(),
-                other => return Err(type_err("array or null", &other)),
-            };
-            let i = *n as i64;
-            let idx = if i < 0 {
-                (arr.len() as i64 + i).max(0)
-            } else {
-                i
-            } as usize;
-            while arr.len() <= idx {
-                arr.push(Value::Null);
-            }
-            arr[idx] = set_path_inner(arr[idx].clone(), tail, value)?;
-            Ok(Value::Array(Arc::new(arr)))
-        }
-        other => Err(type_err("string or number path step", other)),
-    }
+    eval::set_at_path(input, path.as_ref(), value)
 }
 
 // ---- markdown: toc ---------------------------------------------------------
@@ -1283,7 +1185,6 @@ fn frontmatter(input: &Value) -> Value {
 }
 
 fn heading_to_entry(node: Arc<Node>) -> Value {
-    use std::collections::BTreeMap;
     let mut obj: BTreeMap<String, Value> = BTreeMap::new();
     if let Some(level) = node.attrs.get(attr::LEVEL).cloned() {
         obj.insert("level".into(), level);
