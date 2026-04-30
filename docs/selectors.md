@@ -95,7 +95,6 @@ mdqy '## Usage > links | .href'
 
 ## When to use what
 
-jq forms like `headings | select(.level == 2)` spell everything
-out. Selector forms like `h2`, `# Install`, `>` are shorter at
-the call site. Pick whichever reads better. The compiled plan is
-the same either way.
+`headings | select(.level == 2)` and `h2` compile to the same
+plan. Selector forms are shorter at the call site; the jq forms
+spell out the predicate.

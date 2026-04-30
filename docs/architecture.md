@@ -2,18 +2,6 @@
 
 ## The pipeline
 
-```
-bytes ──► pulldown events ──► Node tree ──► Value stream ──► emit
-                │                  │             │
-                └─ stream path ────┘             │
-                   (skips the tree)              │
-                                                 │
-         Expr AST ─────────────────────┬─────────┘
-           ▲                           │
-           │                           │
-         tokens ◄── source expr    eval env
-```
-
 Source markdown hits `pulldown-cmark` with `ENABLE_OFFSET_ITER`.
 Every event carries a byte span back to the original buffer. That
 span travels through the tree and survives on every `Node` we
@@ -82,9 +70,10 @@ evaluator optimises the common shallow read queries. Pulling every
 answer from the event iterator and stop.
 
 Anything mutating, recursive, cross-stream, or variable-binding
-falls back to tree mode. A wrong positive would give corrupt
-results; a wrong negative is slower but correct. The differential
-test in `tests/queries.rs` keeps both honest.
+falls back to tree mode. The predicate is conservative: a query
+the stream runner can't handle correctly must fall back. The
+differential test in `tests/queries.rs` keeps both runners in
+sync.
 
 ## Byte-exact round-trip
 
