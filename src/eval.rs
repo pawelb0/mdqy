@@ -718,7 +718,48 @@ pub(crate) fn paths_of_expr(
             Ok(p) => Ok(p),
             Err(_) => Ok(Vec::new()),
         },
+        Expr::RecurseAll => {
+            let mut out = Vec::new();
+            collect_recurse_paths(input, Vec::new(), &mut out);
+            Ok(out)
+        }
+        Expr::Call { name, args } if name.as_ref() == "select" && args.len() == 1 => {
+            let r = eval(&args[0], input.clone(), env).next().transpose()?;
+            if r.is_some_and(|v| v.truthy()) {
+                Ok(vec![Vec::new()])
+            } else {
+                Ok(Vec::new())
+            }
+        }
         _ => Err(RunError::Other("invalid path expression".into())),
+    }
+}
+
+fn collect_recurse_paths(v: &Value, prefix: Vec<Value>, out: &mut Vec<Vec<Value>>) {
+    out.push(prefix.clone());
+    match v {
+        Value::Array(a) => {
+            for (i, child) in a.iter().enumerate() {
+                let mut p = prefix.clone();
+                p.push(Value::from(i as i64));
+                collect_recurse_paths(child, p, out);
+            }
+        }
+        Value::Object(m) => {
+            for (k, child) in m.iter() {
+                let mut p = prefix.clone();
+                p.push(Value::from(k.clone()));
+                collect_recurse_paths(child, p, out);
+            }
+        }
+        Value::Node(n) => {
+            for (i, child) in n.children.iter().enumerate() {
+                let mut p = prefix.clone();
+                p.push(Value::from(i as i64));
+                collect_recurse_paths(child, p, out);
+            }
+        }
+        _ => {}
     }
 }
 

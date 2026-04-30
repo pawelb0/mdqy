@@ -400,6 +400,27 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// `|=` resolves through `..` and `select(f)` so complex selectors
+/// can drive value-level mutation without `-U`.
+#[test]
+fn assign_through_recurse_and_select() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(
+        run_null(r#"{a:[1,2,3], b:[4,5,6]} | (.. | select(type == "number" and . > 3)) |= . * 10"#),
+        [r#"{"a":[1,2,3],"b":[40,50,60]}"#],
+    );
+    assert_eq!(
+        run_null("{x: 1, y: 2, z: 3} | del(.. | select(type == \"number\" and . == 2))"),
+        [r#"{"x":1,"z":3}"#],
+    );
+}
+
 /// `|=` updates the value at each resolved path. Path-shape covers
 /// Identity, Field, Index, Iterate, Pipe, Comma. Multi-output paths
 /// apply left-to-right.
