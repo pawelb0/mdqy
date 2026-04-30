@@ -11,10 +11,8 @@ pub struct Spanned<'a> {
     pub offset: usize,
 }
 
-/// A single token.
 #[derive(Debug, Clone)]
 pub enum Tok<'a> {
-    // Punctuation
     Dot,
     DotDot,
     LParen,
@@ -34,8 +32,6 @@ pub enum Tok<'a> {
     Slash,
     SlashSlash,
     Question,
-
-    // Operators
     Plus,
     Minus,
     Star,
@@ -44,19 +40,14 @@ pub enum Tok<'a> {
     Le,
     Gt,
     Ge,
-
-    /// `#`..`######`. The `u8` is the heading level (1..=6).
+    /// `#`..`######` for heading selector. Carries level 1..=6.
     Hash(u8),
-    /// `:first`, `:last`, `:nth`, `:text`, `:lang`. Ident after the colon.
+    /// `:first`, `:last`, `:nth`, `:text`, `:lang`.
     ColonIdent(&'a str),
-
-    // Literals & identifiers
     Ident(&'a str),
     Str(Cow<'a, str>),
     Num(f64),
     DollarIdent(&'a str),
-
-    // Keywords
     KwIf,
     KwThen,
     KwElif,
@@ -70,7 +61,6 @@ pub enum Tok<'a> {
     KwAnd,
     KwOr,
     KwNot,
-
     Eof,
 }
 
