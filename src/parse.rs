@@ -256,13 +256,13 @@ impl<'t, 's> Parser<'t, 's> {
     }
 
     fn parse_cmp(&mut self) -> Result<Expr, CompileError> {
-        let lhs = self.parse_add()?;
-        let Some(op) = cmp_op(self.peek()) else {
-            return Ok(lhs);
-        };
-        self.advance();
-        let rhs = self.parse_add()?;
-        Ok(Expr::Cmp(Box::new(lhs), op, Box::new(rhs)))
+        let mut lhs = self.parse_add()?;
+        while let Some(op) = cmp_op(self.peek()) {
+            self.advance();
+            let rhs = self.parse_add()?;
+            lhs = Expr::Cmp(Box::new(lhs), op, Box::new(rhs));
+        }
+        Ok(lhs)
     }
 
     fn parse_add(&mut self) -> Result<Expr, CompileError> {

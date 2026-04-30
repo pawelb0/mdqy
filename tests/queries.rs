@@ -400,6 +400,24 @@ fn split_empty_yields_characters() {
     assert_eq!(run_null(r#""" | split("")"#), ["[]"]);
 }
 
+/// Comparison operators chain left-to-right, matching jq.
+/// `1 < 2 == true` parses as `(1 < 2) == true` and is `true`.
+#[test]
+fn comparisons_left_associate() {
+    fn run_null(expr: &str) -> String {
+        render(
+            &compile(expr)
+                .run_with_env(Value::Null, mdqy::Env::default())
+                .next()
+                .unwrap()
+                .unwrap(),
+        )
+    }
+    assert_eq!(run_null("1 < 2 == true"), "true");
+    assert_eq!(run_null("1 == 1 == true"), "true");
+    assert_eq!(run_null("3 > 2 != false"), "true");
+}
+
 /// `any(f)` and `all(f)` should evaluate `f` per element and reduce
 /// with OR/AND. Regression: predicate was silently ignored, leaving
 /// truthy reduction of the raw items.
