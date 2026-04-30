@@ -386,6 +386,32 @@ fn as_binds_preceding_term_not_pipeline() {
     assert_eq!(run_null("5 | . as $x | $x + 1"), ["6"]);
 }
 
+/// `{k: stream}` should fan out across the value stream, producing
+/// one object per output. jq spec: `{a: (1,2,3)}` yields 3 objects.
+#[test]
+fn object_ctor_fans_out_value_stream() {
+    fn run_null(expr: &str) -> Vec<String> {
+        compile(&format!("{expr} | tojson"))
+            .run_with_env(Value::Null, mdqy::Env::default())
+            .map(Result::unwrap)
+            .map(|v| render(&v))
+            .collect()
+    }
+    assert_eq!(
+        run_null("{a: (1,2,3)}"),
+        [r#"{"a":1}"#, r#"{"a":2}"#, r#"{"a":3}"#],
+    );
+    assert_eq!(
+        run_null("{a: (1,2), b: (10,20)}"),
+        [
+            r#"{"a":1,"b":10}"#,
+            r#"{"a":1,"b":20}"#,
+            r#"{"a":2,"b":10}"#,
+            r#"{"a":2,"b":20}"#,
+        ],
+    );
+}
+
 /// `as $x` body should extend through subsequent pipes, matching jq.
 /// `EXPR as $x | a | b | c` reads as `EXPR as $x | (a | b | c)` so
 /// `$x` stays in scope across the whole rhs.

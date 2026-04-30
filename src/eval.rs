@@ -491,7 +491,7 @@ fn if_stream(
 }
 
 fn object(entries: &[(ObjKey, Expr)], input: Value, env: &Env) -> Stream {
-    let mut map: BTreeMap<String, Value> = BTreeMap::new();
+    let mut combos: Vec<Vec<(String, Value)>> = vec![Vec::new()];
     for (k, v_expr) in entries {
         let key = match k {
             ObjKey::Ident(s) | ObjKey::Str(s) => s.to_string(),
@@ -499,16 +499,37 @@ fn object(entries: &[(ObjKey, Expr)], input: Value, env: &Env) -> Stream {
                 Some(Ok(Value::String(s))) => s.to_string(),
                 Some(Ok(other)) => return once(Err(type_err("string key", &other))),
                 Some(Err(e)) => return once(Err(e)),
-                None => continue,
+                None => return Box::new(std::iter::empty()),
             },
         };
-        let value = match eval(v_expr, input.clone(), env).next().transpose() {
-            Ok(v) => v.unwrap_or(Value::Null),
+        let values: Vec<Value> = match eval(v_expr, input.clone(), env).collect() {
+            Ok(vs) => vs,
             Err(e) => return once(Err(e)),
         };
-        map.insert(key, value);
+        if values.is_empty() {
+            return Box::new(std::iter::empty());
+        }
+        let mut next = Vec::with_capacity(combos.len() * values.len());
+        for combo in &combos {
+            for v in &values {
+                let mut nc = combo.clone();
+                nc.push((key.clone(), v.clone()));
+                next.push(nc);
+            }
+        }
+        combos = next;
     }
-    once(Ok(Value::Object(Arc::new(map))))
+    let out: Vec<Result<Value, RunError>> = combos
+        .into_iter()
+        .map(|kv| {
+            let mut m = BTreeMap::new();
+            for (k, v) in kv {
+                m.insert(k, v);
+            }
+            Ok(Value::Object(Arc::new(m)))
+        })
+        .collect();
+    Box::new(out.into_iter())
 }
 
 // --- recursive descent ------------------------------------------------------
