@@ -344,7 +344,6 @@ fn cells_of(input: Value) -> Stream {
     }
 }
 
-/// First-row cells of each Table in the input.
 fn headers_of(input: Value) -> Stream {
     let mut tables = Vec::new();
     collect(&input, NodeKind::Table, &mut tables);
@@ -371,8 +370,7 @@ fn headers_of(input: Value) -> Stream {
     Box::new(out.into_iter().map(Ok))
 }
 
-/// `error(msg)` raises a runtime error. With no argument, `input`
-/// must already be a string. `try` / `?` can catch it.
+/// No-arg form pulls the message from `input`. Caught by `try`/`?`.
 fn error_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
     let msg = match args.first() {
         Some(expr) => match eval_first(expr, &input, env) {
@@ -517,10 +515,9 @@ fn reduce_bool(
     }
 }
 
-/// `any` / `all`. Zero args: truthy reduction over the array. One
-/// arg: evaluate `f` per element. `any` short-circuits on the first
-/// truthy result, `all` on the first falsy. Empty input matches jq:
-/// `any` is `false`, `all` is `true`.
+/// Zero args: truthy reduction over the array. One arg: evaluate `f`
+/// per element with short-circuit. Empty input: `any` is `false`,
+/// `all` is `true`.
 fn any_or_all(args: &[Expr], input: Value, env: &Env, is_any: bool) -> Stream {
     if args.is_empty() {
         let combine: fn(bool, bool) -> bool = if is_any { |a, b| a || b } else { |a, b| a && b };
@@ -991,7 +988,7 @@ fn eval_number(expr: &Expr, input: &Value, env: &Env, default: f64) -> Result<f6
     }
 }
 
-/// `range(m; n)` yields integers `[m, n)`. `range(m; n; step)` strides.
+/// `range(m; n)`; three-arg form takes a stride.
 fn range(args: &[Expr], input: Value, env: &Env) -> Stream {
     let nums: Result<Vec<f64>, _> = args
         .iter()
@@ -1020,7 +1017,6 @@ fn range(args: &[Expr], input: Value, env: &Env) -> Stream {
     Box::new(values.into_iter().map(Ok))
 }
 
-/// `limit(n; f)` keeps the first `n` results of `f`.
 fn limit(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 2 {
         return err(RunError::Other("limit/2 expects (count; expr)".into()));
@@ -1036,7 +1032,6 @@ fn limit(args: &[Expr], input: Value, env: &Env) -> Stream {
     Box::new(taken.into_iter())
 }
 
-/// `nth(n; f)` returns the nth output of `f` (0-indexed).
 fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     if args.len() != 2 {
         return Err(RunError::Other("nth/2 expects (index; expr)".into()));
@@ -1053,7 +1048,7 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
 // ---- paths -----------------------------------------------------------------
 
 /// `paths` streams every non-empty path into `input` as an array of
-/// keys/indices. Mirrors jq.
+/// keys/indices.
 fn paths(args: &[Expr], input: Value, env: &Env) -> Stream {
     let mut all = Vec::new();
     eval::collect_recurse_paths(&input, Vec::new(), &mut all);
@@ -1077,7 +1072,6 @@ fn paths(args: &[Expr], input: Value, env: &Env) -> Stream {
     Box::new(keep.into_iter().map(|p| Ok(Value::Array(Arc::new(p)))))
 }
 
-/// `getpath(path)` walks an array of keys/indices into `input`.
 fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     let path = match eval_first(&args[0], &input, env)? {
         Some(Value::Array(a)) => a,
@@ -1088,7 +1082,7 @@ fn getpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
 }
 
 /// `setpath(path; value)` writes into a cloned `input`. Creates
-/// missing intermediate containers as jq does.
+/// missing intermediate containers along the way.
 fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     if args.len() != 2 {
         return Err(RunError::Other("setpath/2 expects (path; value)".into()));
@@ -1106,7 +1100,6 @@ fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
 
 // ---- markdown: toc ---------------------------------------------------------
 
-/// `toc` yields `[{level, text, anchor}, ...]` for every heading.
 fn toc(input: &Value) -> Value {
     let mut headings = Vec::new();
     collect_headings(input, &mut headings);
@@ -1157,8 +1150,6 @@ fn build_node(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError>
     Ok(Value::Node(Arc::new(node)))
 }
 
-/// `frontmatter` returns the parsed YAML/TOML metadata block, or
-/// `null` when the document has none.
 fn frontmatter(input: &Value) -> Value {
     match input {
         Value::Node(n) => n
@@ -1182,10 +1173,8 @@ fn heading_to_entry(node: Arc<Node>) -> Value {
     Value::Object(Arc::new(obj))
 }
 
-/// `walk(f)` recursively applies `f` to every value in the input,
-/// bottom-up. Mirrors jq's stdlib `def walk(f): ...` but handles
-/// `Value::Node` by walking children and preserving Arc identity for
-/// untouched subtrees so the byte-exact serialiser keeps clean spans.
+/// `walk(f)`: post-order rewrite. Untouched subtrees keep their Arc
+/// identity so the serialiser can copy clean spans verbatim.
 fn walk_call(args: &[Expr], input: Value, env: &Env) -> Stream {
     if args.len() != 1 {
         return err(RunError::Other("walk/1: expected one argument".into()));
