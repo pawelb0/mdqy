@@ -333,6 +333,36 @@ fn node_constructor_round_trips_kind() {
     assert_eq!(render(&out[0]), "heading");
 }
 
+/// `reduce` with an object-mutating update must not silently echo the
+/// document. Either compute the histogram or surface an error.
+#[test]
+fn reduce_with_assign_does_not_swallow() {
+    let q = compile(r#"reduce ("a","b","a") as $l ({}; .[$l] = (.[$l] // 0) + 1)"#);
+    let mut out = q.run_with_env(Value::Null, mdqy::Env::default());
+    let first = out.next().expect("at least one output");
+    match first {
+        Ok(Value::Object(m)) => {
+            assert!(matches!(m.get("a"), Some(Value::Number(n)) if (n - 2.0).abs() < 1e-9));
+            assert!(matches!(m.get("b"), Some(Value::Number(n)) if (n - 1.0).abs() < 1e-9));
+        }
+        Err(_) => {}
+        Ok(other) => panic!("expected histogram or error, got {other:?}"),
+    }
+}
+
+/// `is_read_only` should return true for assignments that target the
+/// local accumulator inside a `reduce`/`foreach`. The CLI routes any
+/// `is_read_only == false` query through `transform_bytes`, which
+/// silently returns the original document for fold-local mutation.
+#[test]
+fn reduce_local_assign_is_read_only() {
+    assert!(compile(r#"reduce ("a","b") as $l ({}; .[$l] = 1)"#).is_read_only());
+    assert!(compile("reduce range(3) as $x ({}; .a = $x)").is_read_only());
+    assert!(compile("foreach range(3) as $x ({}; .a = $x; .)").is_read_only());
+    assert!(!compile(".foo |= 1").is_read_only());
+    assert!(!compile("del(.foo)").is_read_only());
+}
+
 /// `as $x` should bind the immediately preceding term, not the whole
 /// pipeline. Regression: `2 | . as $x | select($x > 1)` used to greedy-
 /// absorb `2 | .` into the bind, leaving `outer` = the outer input.

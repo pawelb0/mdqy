@@ -115,24 +115,12 @@ pub fn has_mutation(expr: &Expr) -> bool {
         }
         Expr::As { bind, body, .. } => has_mutation(bind) || has_mutation(body),
         Expr::ObjectCtor(entries) => entries.iter().any(|(_, v)| has_mutation(v)),
-        Expr::Reduce {
-            source,
-            init,
-            update,
-            ..
-        } => has_mutation(source) || has_mutation(init) || has_mutation(update),
-        Expr::Foreach {
-            source,
-            init,
-            update,
-            extract,
-            ..
-        } => {
-            has_mutation(source)
-                || has_mutation(init)
-                || has_mutation(update)
-                || has_mutation(extract)
-        }
+        // `reduce`/`foreach` update/extract bodies run against the
+        // local accumulator, not the document. Assignments there
+        // (`.a = $x`, `.[$k] |= ...`) target the acc and don't reach
+        // `transform_bytes`. Only check source and init.
+        Expr::Reduce { source, init, .. } => has_mutation(source) || has_mutation(init),
+        Expr::Foreach { source, init, .. } => has_mutation(source) || has_mutation(init),
         Expr::Def { body, rest, .. } => has_mutation(body) || has_mutation(rest),
         Expr::Identity
         | Expr::RecurseAll
