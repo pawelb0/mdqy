@@ -81,7 +81,6 @@ pub fn node_to_events_owned(node: &Node) -> Vec<Event<'static>> {
         .collect()
 }
 
-
 fn build<'a, I>(events: I) -> Node
 where
     I: Iterator<Item = (Event<'a>, Range<usize>)>,
@@ -289,7 +288,6 @@ fn link_type_str(lt: LinkType) -> &'static str {
         LinkType::WikiLink { .. } => "wikilink",
     }
 }
-
 
 fn emit_events<'a>(node: &'a Node, out: &mut Vec<Event<'a>>) {
     use pulldown_cmark::{BlockQuoteKind, HeadingLevel as HL};

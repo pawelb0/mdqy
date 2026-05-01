@@ -41,7 +41,10 @@ fn null_strings(expr: &str) -> Vec<String> {
 }
 
 fn null_first(expr: &str) -> String {
-    null_strings(expr).into_iter().next().expect("at least one output")
+    null_strings(expr)
+        .into_iter()
+        .next()
+        .expect("at least one output")
 }
 
 fn null_json(expr: &str) -> Vec<String> {
@@ -395,7 +398,10 @@ fn del_in_eval() {
 #[test]
 fn walk_runs_as_value_transformation() {
     let run_null = null_json;
-    assert_eq!(run_null("[1,2,3] | walk(if type == \"number\" then . + 100 else . end)"), ["[101,102,103]"]);
+    assert_eq!(
+        run_null("[1,2,3] | walk(if type == \"number\" then . + 100 else . end)"),
+        ["[101,102,103]"]
+    );
     assert_eq!(
         run_null("{a: 1, b: {c: 2}} | walk(if type == \"number\" then . + 10 else . end)"),
         [r#"{"a":11,"b":{"c":12}}"#],

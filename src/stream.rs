@@ -148,7 +148,6 @@ where
     }
 }
 
-
 fn tag_kind(tag: &Tag<'_>) -> Option<NodeKind> {
     Some(match tag {
         Tag::Heading { .. } => NodeKind::Heading,
@@ -213,4 +212,3 @@ fn scalar_from_start(tag: &Tag<'_>, attr: &str) -> Option<Value> {
         _ => None,
     }
 }
-

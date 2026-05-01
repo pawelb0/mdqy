@@ -113,7 +113,6 @@ pub fn invoke(name: &str, args: &[Expr], input: Value, env: &Env) -> Option<Stre
     })
 }
 
-
 fn ok(v: Value) -> Stream {
     Box::new(std::iter::once(Ok(v)))
 }
@@ -134,7 +133,6 @@ fn type_err(expected: &str, got: &Value) -> RunError {
 fn eval_first(expr: &Expr, input: &Value, env: &Env) -> Result<Option<Value>, RunError> {
     eval::eval(expr, input.clone(), env).next().transpose()
 }
-
 
 fn descendants(input: Value, kind: NodeKind) -> Stream {
     let mut out = Vec::new();
@@ -371,7 +369,6 @@ fn error_builtin(args: &[Expr], input: Value, env: &Env) -> Stream {
     err(RunError::Other(msg))
 }
 
-
 fn first_or(args: &[Expr], input: Value, env: &Env, first: bool) -> Stream {
     if args.is_empty() {
         return one(head_or_tail(&input, first));
@@ -595,7 +592,6 @@ fn to_number(v: &Value) -> Result<Value, RunError> {
     }
 }
 
-
 fn regex_bool(
     args: &[Expr],
     input: &Value,
@@ -663,7 +659,6 @@ fn eval_string_arg(arg: Option<&Expr>, input: &Value, env: &Env) -> Result<Strin
         None => Err(RunError::Other("argument stream was empty".into())),
     }
 }
-
 
 fn split(args: &[Expr], input: &Value, env: &Env) -> Result<Value, RunError> {
     let s = expect_string(input)?;
@@ -843,7 +838,6 @@ fn env_as_value() -> Value {
     Value::Object(Arc::new(map))
 }
 
-
 fn by_key_array(
     args: &[Expr],
     input: Value,
@@ -945,7 +939,6 @@ fn expect_array(v: &Value) -> Result<&Vec<Value>, RunError> {
     }
 }
 
-
 fn eval_number(expr: &Expr, input: &Value, env: &Env, default: f64) -> Result<f64, RunError> {
     match eval_first(expr, input, env)? {
         Some(Value::Number(n)) => Ok(n),
@@ -1010,7 +1003,6 @@ fn nth(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
         .unwrap_or(Ok(Value::Null))
 }
 
-
 fn paths(args: &[Expr], input: Value, env: &Env) -> Stream {
     let mut all = Vec::new();
     eval::collect_recurse_paths(&input, Vec::new(), &mut all);
@@ -1058,7 +1050,6 @@ fn setpath(args: &[Expr], input: Value, env: &Env) -> Result<Value, RunError> {
     };
     eval::set_at_path(input, path.as_ref(), value)
 }
-
 
 fn toc(input: &Value) -> Value {
     let mut headings = Vec::new();
@@ -1147,7 +1138,11 @@ fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
     let inner = match &v {
         Value::Array(a) => {
             let (out, changed) = walk_seq(a, f, env)?;
-            if changed { Value::Array(Arc::new(out)) } else { v.clone() }
+            if changed {
+                Value::Array(Arc::new(out))
+            } else {
+                v.clone()
+            }
         }
         Value::Node(n) => {
             let (out, changed) = walk_seq(&n.children, f, env)?;
@@ -1173,7 +1168,11 @@ fn walk_value(v: Value, f: &Expr, env: &Env) -> Result<Value, RunError> {
                 }
                 new_map.insert(k.clone(), new_v);
             }
-            if changed { Value::Object(Arc::new(new_map)) } else { v.clone() }
+            if changed {
+                Value::Object(Arc::new(new_map))
+            } else {
+                v.clone()
+            }
         }
         _ => v.clone(),
     };

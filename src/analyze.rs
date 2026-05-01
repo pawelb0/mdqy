@@ -101,7 +101,6 @@ pub fn has_mutation(expr: &Expr) -> bool {
     }
 }
 
-
 fn unfold_pipeline(expr: &Expr) -> Vec<&Expr> {
     let mut out = Vec::new();
     unfold(expr, &mut out);

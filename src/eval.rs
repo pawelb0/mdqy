@@ -169,7 +169,6 @@ pub(crate) fn eval(expr: &Expr, input: Value, env: &Env) -> Stream {
     }
 }
 
-
 fn once(r: Result<Value, RunError>) -> Stream {
     Box::new(std::iter::once(r))
 }
@@ -189,7 +188,6 @@ fn lit(l: &Literal) -> Value {
         Literal::String(s) => Value::String(Arc::from(s.as_ref())),
     }
 }
-
 
 fn field(input: &Value, name: &str) -> Result<Value, RunError> {
     match input {
@@ -252,7 +250,10 @@ fn slice(input: &Value, lo: Option<i64>, hi: Option<i64>) -> Result<Value, RunEr
     if let Value::String(s) = input {
         let chars: Vec<char> = s.chars().collect();
         let (start, end) = slice_bounds(lo, hi, chars.len());
-        let out: String = chars.get(start..end).map(|c| c.iter().collect()).unwrap_or_default();
+        let out: String = chars
+            .get(start..end)
+            .map(|c| c.iter().collect())
+            .unwrap_or_default();
         return Ok(Value::from(out));
     }
     let arr: &[Value] = match input {
@@ -262,7 +263,10 @@ fn slice(input: &Value, lo: Option<i64>, hi: Option<i64>) -> Result<Value, RunEr
         other => return Err(type_err("array, node, or string", other)),
     };
     let (start, end) = slice_bounds(lo, hi, arr.len());
-    let out = arr.get(start..end).map(<[Value]>::to_vec).unwrap_or_default();
+    let out = arr
+        .get(start..end)
+        .map(<[Value]>::to_vec)
+        .unwrap_or_default();
     Ok(Value::Array(Arc::new(out)))
 }
 
@@ -307,7 +311,6 @@ fn eval_int(expr: Option<&Expr>, input: &Value, env: &Env) -> Result<Option<i64>
         None => Ok(None),
     }
 }
-
 
 fn cmp_stream(l: &Expr, op: CmpOp, r: &Expr, input: Value, env: &Env) -> Stream {
     cross(l, r, input, env, move |lv, rv| {
@@ -457,7 +460,6 @@ fn neg(v: Value) -> Result<Value, RunError> {
     }
 }
 
-
 fn if_stream(
     branches: &[(Expr, Expr)],
     else_branch: Option<&Expr>,
@@ -518,7 +520,6 @@ fn object(entries: &[(ObjKey, Expr)], input: Value, env: &Env) -> Stream {
         .collect();
     Box::new(out.into_iter())
 }
-
 
 struct RecurseAll {
     stack: Vec<Value>,
@@ -611,7 +612,6 @@ fn reduce_fold(
     Box::new(out.into_iter())
 }
 
-
 /// Errors on expression shapes that aren't path-like.
 pub(crate) fn paths_of_expr(
     expr: &Expr,
@@ -677,7 +677,9 @@ fn iter_path_steps(input: &Value) -> Result<Vec<Value>, RunError> {
     match input {
         Value::Array(a) => Ok((0..a.len()).map(|i| Value::from(i as i64)).collect()),
         Value::Object(m) => Ok(m.keys().map(|k| Value::from(k.clone())).collect()),
-        Value::Node(n) => Ok((0..n.children.len()).map(|i| Value::from(i as i64)).collect()),
+        Value::Node(n) => Ok((0..n.children.len())
+            .map(|i| Value::from(i as i64))
+            .collect()),
         Value::Null => Ok(Vec::new()),
         other => Err(type_err("iterable", other)),
     }
@@ -739,11 +741,7 @@ pub(crate) fn get_at_path(input: &Value, path: &[Value]) -> Value {
     cur
 }
 
-pub(crate) fn set_at_path(
-    input: Value,
-    path: &[Value],
-    value: Value,
-) -> Result<Value, RunError> {
+pub(crate) fn set_at_path(input: Value, path: &[Value], value: Value) -> Result<Value, RunError> {
     let Some((head, tail)) = path.split_first() else {
         return Ok(value);
     };
@@ -777,7 +775,11 @@ pub(crate) fn set_at_path(
         (Value::Array(a), Value::Number(num)) => {
             let mut new_arr = (*a).clone();
             let i = *num as i64;
-            let idx = if i < 0 { (new_arr.len() as i64 + i).max(0) } else { i } as usize;
+            let idx = if i < 0 {
+                (new_arr.len() as i64 + i).max(0)
+            } else {
+                i
+            } as usize;
             if new_arr.len() <= idx {
                 new_arr.resize(idx + 1, Value::Null);
             }
