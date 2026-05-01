@@ -1601,6 +1601,99 @@ ts_eq VV_children_count '1' "$TINY" '[headings:first | .children[]] | length'
 # `..` walks every value.
 ts_in VV_recurse_all 'http' "$TINY" '.. | select(type == "link") | .href'
 
+section "XX. output format matrix"
+
+# md output: Node round-trips, scalars print as JSON, raw-string strips quotes.
+ts_eq XX_md_node_id "$TINY" "$TINY" '.' --output md
+ts_eq XX_md_node_h1 $'# Tiny\n' "$TINY" 'h1' --output md
+tn_eq XX_md_scalar_int '5' '5' --output md
+tn_eq XX_md_scalar_str '"hello"' '"hello"' --output md
+tn_eq XX_md_scalar_bool 'true' 'true' --output md
+tn_eq XX_md_scalar_null 'null' 'null' --output md
+tn_eq XX_md_raw_str 'plain' '"plain"' --output md --raw
+got=$({ "$MDQY" -n --output md '[1,2]' 2>&1; printf x; })
+sin XX_md_array_pretty $'[\n  1,\n  2\n]' "${got%x}"
+
+# json output: structured.
+ts_in XX_json_h1_kind '"kind":"heading"' "$TINY" 'h1' --output json -c
+ts_in XX_json_array_arr '[1,2,3]' "$TINY" '[1,2,3]' --output json -c
+tn_eq XX_json_compact_obj '{"a":1,"b":2}' '{a:1, b:2}' --output json -c
+ts_in XX_json_pretty_indent '"kind"' "$TINY" 'h1' --output json
+ts_in XX_json_with_spans '"span"' "$TINY" 'h1' --output json --with-spans -c
+ts_nin XX_json_no_spans_default '"span"' "$TINY" 'h1' --output json -c
+ts_in XX_json_int_format '"level":1' "$TINY" 'h1' --output json -c
+ts_nin XX_json_no_float '1.0' "$TINY" 'h1' --output json -c
+tn_eq XX_json_null 'null' 'null' --output json
+tn_eq XX_json_string_quoted '"hi"' '"hi"' --output json -c
+
+# text output: flat plaintext for nodes, scalars on a line.
+ts_eq XX_text_h1 "Tiny" "$TINY" 'h1' --output text
+ts_eq XX_text_para "A paragraph with a link." "$TINY" 'paragraphs:first' --output text
+tn_eq XX_text_scalar 'hi' '"hi"' --output text
+tn_eq XX_text_int '5' '5' --output text
+got=$({ "$MDQY" -n --output text '[1,2,3]' 2>&1; printf x; })
+sin XX_text_array_compact '[1,2,3]' "${got%x}"
+got=$({ "$MDQY" -n --output text '{a:1}' 2>&1; printf x; })
+sin XX_text_object_compact '{"a":1}' "${got%x}"
+
+# auto: pipe → md for nodes, JSON for scalars.
+got=$({ printf '%s' "$TINY" | "$MDQY" --stdin '.' 2>&1; printf x; })
+[[ "${got%x}" == "$TINY" ]] && ok XX_auto_pipe_node_md || ko "XX_auto_pipe_node_md :: drift"
+got=$({ "$MDQY" -n '5' 2>&1; printf x; })
+sin XX_auto_pipe_scalar_json '5' "${got%x}"
+
+# --raw strips quotes only for scalar strings; nodes unaffected.
+tn_eq XX_raw_string 'hi' '"hi"' --raw
+tn_eq XX_raw_int '5' '5' --raw
+got=$({ printf '%s' "$TINY" | "$MDQY" --stdin --raw 'h1' 2>&1; printf x; })
+sin XX_raw_node_md '# Tiny' "${got%x}"
+
+# --raw + --output text: scalars unquoted on a line.
+tn_eq XX_raw_text 'hi' '"hi"' --raw --output text
+
+# --compact (-c): one-line JSON.
+got=$({ "$MDQY" -n -c '{a:1, b:[2,3]}' 2>&1; printf x; })
+sin XX_compact_oneline '{"a":1,"b":[2,3]}' "${got%x}"
+[[ $(printf '%s' "${got%x}" | wc -l) -le 1 ]] && ok XX_compact_one_line || ko "XX_compact_one_line"
+
+# Pretty (no -c) spans multiple lines.
+got=$({ "$MDQY" -n '{a:1,b:2}' 2>&1; printf x; })
+[[ $(printf '%s' "${got%x}" | wc -l) -ge 3 ]] && ok XX_pretty_multiline || ko "XX_pretty_multiline"
+
+# Multi-result stream: each on own line.
+got=$({ printf '%s' "$TINY" | "$MDQY" --stdin --output text 'headings | .text' 2>&1; printf x; })
+sin XX_stream_text_a 'Tiny' "${got%x}"
+sin XX_stream_text_b 'Second heading' "${got%x}"
+lines=$(printf '%s' "${got%x}" | wc -l | tr -d ' ')
+[[ "$lines" == 2 ]] && ok XX_stream_text_lines || ko "XX_stream_text_lines :: lines=$lines"
+
+# JSON stream: each value on its own line (pretty by default, multi-line each).
+got=$({ printf '%s' "$TINY" | "$MDQY" --stdin --output json -c 'headings | .text' 2>&1; printf x; })
+[[ "${got%x}" == $'"Tiny"\n"Second heading"\n' ]] && ok XX_json_stream_compact || ko "XX_json_stream_compact :: '${got%x}'"
+
+# --with-path tags JSON output but not text.
+XX_DIR=$(mktemp -d "$TMP/xxout.XXXXXX")
+printf '# A\n' > "$XX_DIR/a.md"
+got=$({ "$MDQY" --output json --with-path 'h1 | .text' "$XX_DIR" 2>&1; printf x; })
+sin XX_withpath_json '"path"' "${got%x}"
+sin XX_withpath_value '"value"' "${got%x}"
+got=$({ "$MDQY" --output text --with-path 'h1 | .text' "$XX_DIR" 2>&1; printf x; })
+nin XX_withpath_text_skips '"path"' "${got%x}"
+
+# md → mdcat-style external pipe still readable as md.
+got=$({ printf '%s' "$TINY" | "$MDQY" --stdin --output md 'codeblocks:first' 2>&1; printf x; })
+sin XX_md_codefence '```rust' "${got%x}"
+sin XX_md_codebody 'fn main' "${got%x}"
+
+# Empty stream prints nothing.
+got=$({ "$MDQY" -n 'empty' 2>&1; printf x; })
+[[ "${got%x}" == "" ]] && ok XX_empty_stream || ko "XX_empty_stream"
+
+# Synthetic Section node serializes via cmark.
+got=$({ printf '%s' "$TINY" | "$MDQY" --stdin --output md 'section("Tiny")' 2>&1; printf x; })
+sin XX_section_md '# Tiny' "${got%x}"
+sin XX_section_md_body 'paragraph' "${got%x}" 2>/dev/null || sin XX_section_md_body 'A paragraph' "${got%x}"
+
 section "WW. stream/tree parity widening"
 
 for q in \
