@@ -1160,6 +1160,472 @@ while IFS= read -r md; do
     fi
 done < <(find "$ROOT_REPO" -name '*.md' -not -path '*/target/*' -not -path '*/.git/*' | sort)
 
+section "LL. nested combinators"
+
+NEST=$'# Top\n\n## Mid\n\n### Leaf\n\nleaf body.\n\n## Other\n\nother body.\n'
+ts_in LL_two_level   "leaf body" "$NEST" '# Top > ## Mid | .text'
+ts_in LL_three_level "leaf body" "$NEST" '# Top > ## Mid > ### Leaf | .text'
+ts_in LL_pseudo_combinator "Leaf" "$NEST" '# Top > ## Mid > h3:first | .text'
+ts_in LL_combinator_with_select "Leaf" "$NEST" '# Top > ## Mid > headings | select(.level == 3) | .text'
+ts_eq LL_combinator_no_match "" "$NEST" '# Top > # Nope | .text'
+ts_in LL_h_then_combinator "Leaf" "$NEST" 'h1:first > h2:first > h3:first | .text'
+ts_in LL_section_then_codeblocks "fn main" "$TINY" '# Tiny > codeblocks | .literal'
+ts_in LL_section_codeblocks_first "fn main" "$TINY" '# Tiny > codeblocks:first | .literal'
+ts_in LL_links_inside_section "example.com" "$TINY" '# Tiny > links | .href'
+ts_in LL_section_paragraphs_text "A paragraph with a link" "$TINY" '# Tiny > paragraphs:first | .text'
+ts_in LL_repeated_combinator "A.1.1" "$DEEP" '# A > ## "A.1" > ### "A.1.1" | .text'
+ts_in LL_quoted_section_name "A.1" "$DEEP" '# A > ## "A.1" | .children[0].text'
+ts_eq LL_combinator_chain_count "1" "$DEEP" '[# A > ## "A.1" > ### "A.1.1"] | length'
+ts_in LL_h2_inside_h1 "A.1" "$DEEP" 'h1:first > h2:first | .text'
+ts_in LL_h3_inside_h2 "A.1.1" "$DEEP" 'h1:first > h2:first > h3:first | .text'
+ts_eq LL_combinator_then_select_count "2" "$DEEP" '[# A > headings | select(.level == 3)] | length'
+ts_in LL_combinator_links "a.com" "$LINKS_DOC" '# Links > links | .href'
+ts_in LL_combinator_images_alt "alt-text" "$LINKS_DOC" '# Links > images | .alt'
+ts_eq LL_three_h1_chain_empty "" "$DEEP" '# A > # B | .text'
+
+section "MM. idempotent mutations"
+
+# Same mutation twice — second pass is identity.
+TFM=$(mktemp "$TMP/idem.XXXXXX.md"); printf '[a](http://x.com)\n' > "$TFM"
+"$MDQY" -U '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFM"
+first=$(cat "$TFM")
+"$MDQY" -U '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFM"
+second=$(cat "$TFM")
+[[ "$first" == "$second" ]] && ok MM_sub_https_idempotent || ko "MM_sub_https_idempotent :: '$first' vs '$second'"
+
+# Walk identity reaches root unchanged through three repeats.
+MM_REF="$TMP/walk_ref.md"; printf '%s' "$TINY" > "$MM_REF"
+for i in 1 2 3; do
+    TFW3="$TMP/walkid_$i.md"; printf '%s' "$TINY" > "$TFW3"
+    "$MDQY" -U 'walk(.)' "$TFW3"
+    if cmp -s "$TFW3" "$MM_REF"; then ok MM_walk_id_pass$i; else ko "MM_walk_id_pass$i :: drift"; fi
+done
+
+# Bumping levels twice gets to 3.
+TFL=$(mktemp "$TMP/lvl.XXXXXX.md"); printf '# A\n' > "$TFL"
+"$MDQY" -U 'walk(if type == "heading" then .level |= (. + 1) else . end)' "$TFL"
+"$MDQY" -U 'walk(if type == "heading" then .level |= (. + 1) else . end)' "$TFL"
+sin MM_double_level_bump "### A" "$(cat "$TFL")"
+
+# Del once then del again on the same attr is a no-op the second time.
+TFD=$(mktemp "$TMP/del.XXXXXX.md"); printf '[x](http://e.com "T")\n' > "$TFD"
+"$MDQY" -U 'del((.. | select(type == "link")).title)' "$TFD"
+gold=$(cat "$TFD")
+"$MDQY" -U 'del((.. | select(type == "link")).title)' "$TFD"
+[[ "$(cat "$TFD")" == "$gold" ]] && ok MM_del_idempotent || ko "MM_del_idempotent :: drift"
+
+# Sub on an already-https link is identity.
+TFS2=$(mktemp "$TMP/https.XXXXXX.md"); printf '[a](https://x.com)\n' > "$TFS2"
+src=$(cat "$TFS2")
+"$MDQY" -U '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFS2"
+[[ "$(cat "$TFS2")" == "$src" ]] && ok MM_https_already_idempotent || ko "MM_https_already_idempotent"
+
+# Multiple --dry-run leaves file untouched even after many invocations.
+TFY="$TMP/dry.md"; printf '%s' "$TINY" > "$TFY"
+TFYREF="$TMP/dry_ref.md"; printf '%s' "$TINY" > "$TFYREF"
+for i in 1 2 3 4; do
+    "$MDQY" --dry-run '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFY" >/dev/null
+done
+if cmp -s "$TFY" "$TFYREF"; then ok MM_dryrun_no_write; else ko "MM_dryrun_no_write"; fi
+
+# walk(.) then sub: order does not matter for clean trees.
+TFA=$(mktemp "$TMP/order_a.XXXXXX.md"); printf '%s' "$TINY" > "$TFA"
+TFB=$(mktemp "$TMP/order_b.XXXXXX.md"); printf '%s' "$TINY" > "$TFB"
+"$MDQY" -U 'walk(.)' "$TFA"
+"$MDQY" -U '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFA"
+"$MDQY" -U '(.. | select(type == "link")).href |= sub("http:"; "https:")' "$TFB"
+"$MDQY" -U 'walk(.)' "$TFB"
+[[ "$(cat "$TFA")" == "$(cat "$TFB")" ]] && ok MM_order_independent || ko "MM_order_independent :: drift"
+
+# Walk that doesn't change attrs leaves dirty bit alone.
+TFC2="$TMP/walknoc.md"; printf '%s' "$TINY" > "$TFC2"
+TFC2R="$TMP/walknoc_ref.md"; printf '%s' "$TINY" > "$TFC2R"
+"$MDQY" -U 'walk(if type == "code" then . else . end)' "$TFC2"
+if cmp -s "$TFC2" "$TFC2R"; then ok MM_walk_noop_id; else ko "MM_walk_noop_id :: drift"; fi
+
+
+# Anchor recompute: walking and reassigning .text is no-op.
+TFAN=$(mktemp "$TMP/anch.XXXXXX.md"); printf '# Hi\n' > "$TFAN"
+src=$(cat "$TFAN")
+"$MDQY" -U 'walk(.)' "$TFAN"
+[[ "$(cat "$TFAN")" == "$src" ]] && ok MM_walk_heading_id || ko "MM_walk_heading_id"
+
+section "NN. aggregation matrix"
+
+NN_DIR=$(mktemp -d "$TMP/nn.XXXXXX")
+printf '# A\n' > "$NN_DIR/a.md"
+printf '# B\n' > "$NN_DIR/b.md"
+printf '# C\n' > "$NN_DIR/c.md"
+
+# per-file: outputs concatenate in sorted order.
+got=$({ "$MDQY" 'h1 | .text' "$NN_DIR" 2>&1; printf x; })
+[[ "${got%x}" == $'"A"\n"B"\n"C"\n' ]] && ok NN_perfile_order || ko "NN_perfile_order :: '${got%x}'"
+
+# slurp: array of three roots.
+got=$({ "$MDQY" --slurp 'length' "$NN_DIR" 2>&1; printf x; })
+[[ "${got%x}" == $'3\n' ]] && ok NN_slurp_count || ko "NN_slurp_count :: '${got%x}'"
+
+# slurp + headings reduces over the array.
+got=$({ "$MDQY" --slurp '[.[] | h1 | .text]' "$NN_DIR" 2>&1; printf x; })
+sin NN_slurp_headings 'A' "${got%x}"
+
+# merge: virtual root has all three headings.
+tn_in NN_merge_dummy "1" '1'
+got=$({ "$MDQY" --merge '[h1] | length' "$NN_DIR" 2>&1; printf x; })
+[[ "${got%x}" == $'3\n' ]] && ok NN_merge_count || ko "NN_merge_count :: '${got%x}'"
+
+# --with-path tags JSON output.
+got=$({ "$MDQY" --output json --with-path 'h1 | .text' "$NN_DIR" 2>&1; printf x; })
+sin NN_withpath_a '"path"' "${got%x}"
+sin NN_withpath_b 'a.md' "${got%x}"
+
+# --workers parallel matches sequential.
+got_seq=$({ "$MDQY" 'h1 | .text' "$NN_DIR" 2>&1; printf x; })
+got_par=$({ "$MDQY" --workers 4 'h1 | .text' "$NN_DIR" 2>&1; printf x; })
+[[ "${got_seq%x}" == "${got_par%x}" ]] && ok NN_workers_parity || ko "NN_workers_parity"
+
+# --no-ignore picks up files that .gitignore would skip.
+NN_DIR2=$(mktemp -d "$TMP/nn2.XXXXXX")
+printf 'skip.md\n' > "$NN_DIR2/.ignore"
+printf '# A\n' > "$NN_DIR2/keep.md"
+printf '# X\n' > "$NN_DIR2/skip.md"
+got=$({ "$MDQY" 'h1 | .text' "$NN_DIR2" 2>&1; printf x; })
+nin NN_ignore_default 'X' "${got%x}"
+got=$({ "$MDQY" --no-ignore 'h1 | .text' "$NN_DIR2" 2>&1; printf x; })
+sin NN_no_ignore_includes 'X' "${got%x}"
+
+# --hidden brings in dotfiles.
+NN_DIR3=$(mktemp -d "$TMP/nn3.XXXXXX")
+printf '# Visible\n' > "$NN_DIR3/v.md"
+printf '# Hidden\n' > "$NN_DIR3/.h.md"
+got=$({ "$MDQY" 'h1 | .text' "$NN_DIR3" 2>&1; printf x; })
+nin NN_hidden_default 'Hidden' "${got%x}"
+got=$({ "$MDQY" --hidden 'h1 | .text' "$NN_DIR3" 2>&1; printf x; })
+sin NN_hidden_flag 'Hidden' "${got%x}"
+
+# Mixed file extensions.
+NN_DIR4=$(mktemp -d "$TMP/nn4.XXXXXX")
+printf '# M\n' > "$NN_DIR4/x.md"
+printf '# K\n' > "$NN_DIR4/x.markdown"
+printf '# X\n' > "$NN_DIR4/x.mdx"
+printf 'not markdown\n' > "$NN_DIR4/x.txt"
+got=$({ "$MDQY" 'h1 | .text' "$NN_DIR4" 2>&1; printf x; })
+sin NN_md_ext 'M' "${got%x}"
+sin NN_markdown_ext 'K' "${got%x}"
+sin NN_mdx_ext 'X' "${got%x}"
+nin NN_txt_skip 'not markdown' "${got%x}"
+
+section "OO. unicode and encoding"
+
+EMOJI=$'# 🎯 Target\n\nbody.\n'
+CJK=$'# 中文标题\n\n正文。\n'
+RTL=$'# שלום\n\nגוף.\n'
+COMBINING=$'# Café\n\nbody.\n'
+
+ts_in OO_emoji_text 'Target' "$EMOJI" 'h1 | .text'
+ts_in OO_emoji_anchor 'target' "$EMOJI" 'h1 | .anchor'
+ts_in OO_cjk_text '中文标题' "$CJK" 'h1 | .text'
+ts_in OO_rtl_text 'שלום' "$RTL" 'h1 | .text'
+ts_in OO_combining 'Café' "$COMBINING" 'h1 | .text'
+ts_eq OO_emoji_id "$EMOJI" "$EMOJI" '.'
+ts_eq OO_cjk_id "$CJK" "$CJK" '.'
+ts_eq OO_rtl_id "$RTL" "$RTL" '.'
+ts_eq OO_combining_id "$COMBINING" "$COMBINING" '.'
+
+# String length counts codepoints, not bytes.
+tn_eq OO_strlen_emoji '8' '"🎯 Target" | length'
+tn_eq OO_strlen_cjk '4' '"中文标题" | length'
+
+# Slicing by codepoint.
+tn_eq OO_slice_cjk '"中文"' '"中文标题" | .[0:2]'
+
+# upcase/downcase only ASCII; CJK unchanged.
+tn_eq OO_upcase_ascii_only '"CAFé"' '"Café" | ascii_upcase'
+
+# Anchor slugifies through `slug` crate (emoji → cldr name).
+ts_in OO_anchor_emoji "target" "$EMOJI" 'h1 | .anchor'
+
+# Multi-byte inside link text.
+MB_LINK=$'[中文](http://example.com)\n'
+ts_in OO_mb_link_text '中文' "$MB_LINK" 'links | .text'
+ts_in OO_mb_link_href 'example.com' "$MB_LINK" 'links | .href'
+
+# Frontmatter with CJK value.
+FM_CJK=$'---\ntitle: 中文\n---\n\n# Body\n'
+ts_in OO_fm_cjk '中文' "$FM_CJK" 'frontmatter | .title'
+
+# JSON output preserves UTF-8 in strings.
+got=$(printf '%s' "$EMOJI" | "$MDQY" --stdin --output json 'h1 | .text' 2>&1; printf x)
+sin OO_json_keeps_emoji 'Target' "${got%x}"
+
+# Round-trip with mixed scripts.
+MIXED=$'# Héllo 中文 🎯\n\nbody.\n'
+ts_eq OO_mixed_id "$MIXED" "$MIXED" '.'
+ts_in OO_mixed_text 'Héllo 中文 🎯' "$MIXED" 'h1 | .text'
+
+section "PP. regex builtin edges"
+
+# test() basics.
+tn_eq PP_test_match 'true' '"foobar" | test("foo")'
+tn_eq PP_test_no_match 'false' '"foobar" | test("baz")'
+tn_eq PP_test_anchored 'true' '"foobar" | test("^foo")'
+tn_eq PP_test_anchored_end 'true' '"foobar" | test("bar$")'
+tn_eq PP_test_word_boundary 'false' '"foobar" | test("\\bbar\\b")'
+tn_eq PP_test_class 'true' '"abc123" | test("[0-9]+")'
+tn_eq PP_test_alternation 'true' '"cat" | test("cat|dog")'
+
+# sub() vs gsub().
+tn_eq PP_sub_first '"Xoo"' '"foo" | sub("f"; "X")'
+tn_eq PP_sub_no_match_keeps '"foo"' '"foo" | sub("z"; "X")'
+tn_eq PP_gsub_all '"hXllX"' '"hello" | gsub("[eo]"; "X")'
+tn_eq PP_gsub_empty '"foo"' '"foo" | gsub("z"; "X")'
+
+# Capture groups via gsub.
+tn_eq PP_gsub_capture '"AAbb"' '"aabb" | gsub("a"; "A")'
+
+# Pattern with backslash-d.
+tn_eq PP_test_digit 'true' '"abc7"  | test("\\d")'
+tn_eq PP_sub_digit '"X"' '"7" | sub("\\d"; "X")'
+
+# Regex on empty string.
+tn_eq PP_test_empty_str 'false' '"" | test("a")'
+tn_eq PP_gsub_empty_str '""' '"" | gsub("a"; "X")'
+
+# Multiline behaviour.
+tn_eq PP_test_multiline 'true' '"foo\nbar" | test("bar")'
+
+# Unicode pattern.
+tn_eq PP_test_unicode 'true' '"café" | test("é")'
+
+# Bad regex errors.
+tn_fail PP_bad_regex '"x" | test("[")'
+
+section "QQ. paths matrix"
+
+tn_eq QQ_paths_simple '[["a"]]' '{a: 1} | [paths]' -c
+tn_eq QQ_paths_nested '[["a"],["a","b"]]' '{a: {b: 1}} | [paths]' -c
+tn_eq QQ_paths_array '[[0],[1]]' '[10, 20] | [paths]' -c
+tn_eq QQ_paths_filter '[["a","b"]]' '{a: {b: 1}, c: 2} | [paths(. == 1)]' -c
+tn_eq QQ_paths_empty '[]' '{} | [paths]' -c
+tn_eq QQ_paths_arr_empty '[]' '[] | [paths]' -c
+tn_eq QQ_paths_mixed '[["a"],["a",0],["a",1]]' '{a: [1, 2]} | [paths]' -c
+
+tn_eq QQ_getpath_top '1' '{a: 1} | getpath(["a"])'
+tn_eq QQ_getpath_nested '99' '{a: {b: 99}} | getpath(["a","b"])'
+tn_eq QQ_getpath_array '20' '[10, 20, 30] | getpath([1])'
+tn_eq QQ_getpath_missing 'null' '{a: 1} | getpath(["b"])'
+tn_eq QQ_getpath_deep_missing 'null' '{a: 1} | getpath(["a","b","c"])'
+
+tn_eq QQ_setpath_simple '{"a":99}' '{} | setpath(["a"]; 99)' -c
+tn_eq QQ_setpath_nested '{"a":{"b":1}}' '{} | setpath(["a","b"]; 1)' -c
+tn_eq QQ_setpath_array '[null,99]' '[] | setpath([1]; 99)' -c
+tn_eq QQ_setpath_overwrite '{"a":2}' '{a:1} | setpath(["a"]; 2)' -c
+tn_eq QQ_setpath_creates_chain '{"a":{"b":{"c":7}}}' '{} | setpath(["a","b","c"]; 7)' -c
+
+tn_eq QQ_del_top '{"b":2}' '{a:1, b:2} | del(.a)' -c
+tn_eq QQ_del_nested '{"a":{}}' '{a:{b:1}} | del(.a.b)' -c
+tn_eq QQ_del_arr_idx '[1,3]' '[1,2,3] | del(.[1])' -c
+tn_eq QQ_del_neg_idx '[1,2]' '[1,2,3] | del(.[-1])' -c
+
+section "RR. error propagation"
+
+# error in walk arm propagates as a runtime error.
+ts_fail RR_walk_error_propagates "$TINY" 'walk(if type == "heading" then error("boom") else . end)' --output md
+
+# `?` swallows error from .foo on a number.
+tn_eq RR_try_field_on_num '[]' '[5 | .foo?]' -c
+
+# Error inside object value: ObjectCtor short-circuits.
+tn_fail RR_error_in_obj '{x: error("e")}'
+
+# Error inside array kills the array.
+tn_fail RR_error_in_array '[1, error("e"), 3]'
+
+# Postfix `?` chain on null swallows nothing (no error to swallow).
+tn_eq RR_postfix_q_chain 'null' 'null | .a.b.c?'
+
+# Error caught inside select() doesn't kill the stream.
+tn_eq RR_try_in_select '[1,3]' '[1,2,3] | [.[] | select(. != 2)?]' -c
+
+# Chain of `?` still yields one value.
+tn_eq RR_chained_q '"5"' '5 | .foo? // .bar? // (. | tostring)'
+
+# foreach with error in update.
+tn_fail RR_foreach_error 'foreach range(3) as $x (0; if $x == 1 then error("e") else . + $x end; .)'
+
+# Error in alt RHS: never reached if LHS truthy.
+tn_eq RR_alt_short_circuits '5' '5 // error("never")'
+
+# Error reaches stream end when present in last reduce step.
+tn_fail RR_reduce_error_last 'reduce range(3) as $x (0; if $x == 2 then error("last") else . + $x end)'
+
+# .x on undefined var fails.
+tn_fail RR_undef_var '$undef'
+
+# Try inside if-branch swallows error.
+tn_eq RR_try_in_if '99' 'if true then (5 | .foo? // 99) else 1 end'
+
+section "SS. comma + pipe interactions"
+
+# Stream count.
+tn_eq SS_stream_count '3' '[1, 2, 3] | length'
+
+# (a, b) | c — c runs per element.
+tn_eq SS_paren_stream_pipe '[2,4,6]' '[(1, 2, 3) | . * 2]' -c
+
+# a | (b, c) — both branches run.
+tn_eq SS_pipe_paren_stream '[10,100]' '[5 | (. * 2, . * 20)]' -c
+
+# Nested stream fanout (each (1,2) runs through (*2,*3)).
+tn_eq SS_nested_fanout '[2,3,4,6]' '[(1, 2) | (. * 2, . * 3)]' -c
+
+# Object ctor with comma-fanned values.
+tn_eq SS_obj_ctor_fanout '3' '[{a: (1,2,3)}] | length'
+
+# Array ctor with comma collapses to single array.
+tn_eq SS_array_ctor '[1,2,3]' '[1, 2, 3]' -c
+
+# Comma stream into reduce as source.
+tn_eq SS_reduce_comma '6' 'reduce (1, 2, 3) as $x (0; . + $x)'
+
+# Foreach over comma stream.
+tn_eq SS_foreach_comma '3' '[foreach (1, 2, 3) as $x (0; . + $x; .)] | length'
+
+# Pipe right-assoc within parens.
+tn_eq SS_pipe_paren_right '"6"' '(1 | (. + 1) | (. * 3)) | tostring'
+
+# Comma inside object value fans to multiple outputs.
+tn_eq SS_obj_value_fanout '[1,2]' '[{a: (1, 2)} | .a]' -c
+
+# Comma inside array inside object.
+tn_eq SS_arr_in_obj '{"a":[1,2,3]}' '{a: [1, 2, 3]}' -c
+
+# Comma + try.
+tn_eq SS_comma_try '[1,2]' '[(1, 2, error("e"))?]' -c
+
+# Nested parens.
+tn_eq SS_nested_parens '4' '((1) + ((1 + 1)) + 1)'
+
+section "TT. cli matrix extras"
+
+# --output text on nodes prints flat plaintext.
+got=$(printf '%s' "$TINY" | "$MDQY" --stdin --output text 'h1' 2>&1; printf x)
+sin TT_text_node 'Tiny' "${got%x}"
+
+# --output json compact one-line.
+got=$(printf '%s' "$TINY" | "$MDQY" --stdin --output json --compact 'h1 | .text' 2>&1; printf x)
+[[ $(printf '%s' "${got%x}" | wc -l) -le 2 ]] && ok TT_compact_oneline || ko "TT_compact_oneline :: lines"
+
+# --raw strips JSON quotes.
+got=$(printf '%s' "$TINY" | "$MDQY" --stdin --raw 'h1 | .text' 2>&1; printf x)
+sin TT_raw_unquoted 'Tiny' "${got%x}"
+nin TT_raw_no_quote '"Tiny"' "${got%x}"
+
+# --with-spans includes span object.
+got=$(printf '%s' "$TINY" | "$MDQY" --stdin --output json --with-spans 'h1' 2>&1; printf x)
+sin TT_with_spans '"span"' "${got%x}"
+
+# -n with literal expression doesn't read stdin.
+got=$({ "$MDQY" -n '42' < /dev/null 2>&1; printf x; })
+sin TT_null_input_skips_stdin '42' "${got%x}"
+
+# --explain-mode prints stream/tree and exits.
+got=$({ "$MDQY" --explain-mode 'headings | .text' 2>&1; printf x; })
+sin TT_explain_stream 'stream' "${got%x}"
+got=$({ "$MDQY" --explain-mode 'walk(.)' 2>&1; printf x; })
+sin TT_explain_tree 'tree' "${got%x}"
+
+# --compile-only reports parse errors but doesn't read input.
+"$MDQY" --compile-only 'headings | .text' < /dev/null 2>&1 >/dev/null && ok TT_compile_only_clean || ko "TT_compile_only_clean"
+"$MDQY" --compile-only '(((' < /dev/null 2>&1 >/dev/null && ko "TT_compile_only_bad" || ok TT_compile_only_bad
+
+section "UU. number edges"
+
+tn_eq UU_int_round_trip '42' '"42" | tonumber | tostring | tonumber'
+tn_eq UU_int_large '"9007199254740992"' '9007199254740992 | tostring'
+tn_eq UU_div_neg '"-2.5"' '5 / -2 | tostring'
+tn_eq UU_mod_basic '1' '5 % 2'
+tn_eq UU_zero_div '"inf"' '1 / 0 | tostring'
+tn_eq UU_inf_json 'null' '1 / 0'
+tn_eq UU_neg_inf_json 'null' '(0 - 1) / 0'
+tn_eq UU_nan_json 'null' '0 / 0'
+tn_eq UU_float_to_str '"3.14"' '3.14 | tostring'
+tn_eq UU_int_to_str '"42"' '42 | tostring'
+tn_eq UU_str_to_num '42' '"42" | tonumber'
+tn_eq UU_str_to_neg '-3.5' '"-3.5" | tonumber'
+
+section "VV. selector + attr edges"
+
+# Heading levels 1..6 round-trip.
+for L in 1 2 3 4 5 6; do
+    DOC=$(printf '%s%s\n' "$(printf '%.0s#' $(seq 1 $L))" " H${L}")
+    got=$(printf '%s' "$DOC" | "$MDQY" --stdin "h${L} | .text" 2>&1)
+    [[ "$got" == *"H${L}"* ]] && ok VV_h${L}_match || ko "VV_h${L}_match :: '$got'"
+done
+
+# `:nth(0)` and `:first` are equivalent.
+ts_eq VV_first_eq_nth0 "$(printf '%s' "$TINY" | "$MDQY" --stdin 'headings:first | .text' 2>&1)" "$TINY" 'headings:nth(0) | .text'
+
+# `:last` returns the trailing match.
+ts_in VV_last_heading "Second heading" "$TINY" 'headings:last | .text'
+
+# `:nth(-1)` matches `:last`.
+ts_in VV_nth_neg "Second heading" "$TINY" 'headings:nth(-1) | .text'
+
+# Out-of-range nth returns null.
+ts_eq VV_nth_oob "null" "$TINY" 'headings:nth(99) | .text'
+
+# `:lang(rust)` filters fences.
+ts_in VV_lang_match 'fn main' "$TINY" 'codeblocks:lang(rust) | .literal'
+ts_eq VV_lang_no_match "" "$TINY" 'codeblocks:lang(python) | .literal'
+
+# `:text` filters by exact heading text.
+ts_in VV_text_match 'Tiny' "$TINY" 'headings:text("Tiny") | .text'
+ts_eq VV_text_no_match "" "$TINY" 'headings:text("Nope") | .text'
+
+# `.literal` on a heading returns null (only Code has literal).
+ts_eq VV_literal_on_heading 'null' "$TINY" 'headings:first | .literal'
+
+# `.lang` on a heading returns null.
+ts_eq VV_lang_on_heading 'null' "$TINY" 'headings:first | .lang'
+
+# Anchor uses slug.
+ts_in VV_anchor_h2 'second-heading' "$TINY" 'h2:first | .anchor'
+
+# `kind` exposed via stream.
+ts_in VV_kind_via_attr 'heading' "$TINY" 'headings:first | .kind'
+
+# `.children` projection.
+ts_eq VV_children_count '1' "$TINY" '[headings:first | .children[]] | length'
+
+# `..` walks every value.
+ts_in VV_recurse_all 'http' "$TINY" '.. | select(type == "link") | .href'
+
+section "WW. stream/tree parity widening"
+
+for q in \
+    'headings | .text' \
+    'headings | .level' \
+    'headings | .anchor' \
+    'h1 | .text' \
+    'h2 | .anchor' \
+    'codeblocks | .lang' \
+    'codeblocks | .literal' \
+    'links | .href' \
+    'links | .title' \
+    'images | .href' \
+    'images | .alt' \
+    'paragraphs | .text' \
+    'headings | select(.level == 1) | .text' \
+    'headings | select(.level == 2) | .anchor' \
+    'codeblocks | .kind'
+do
+    name=WW_$(printf '%s' "$q" | tr -c 'A-Za-z0-9' '_')
+    tree=$({ printf '%s' "$TINY" | "$MDQY" --stdin "[$q] | .[]" 2>&1; printf x; })
+    stream=$({ printf '%s' "$TINY" | "$MDQY" --stdin "$q" 2>&1; printf x; })
+    [[ "${tree%x}" == "${stream%x}" ]] && ok "$name" || ko "$name :: drift"
+done
+
 printf '\n\n%s%d passed%s, %s%d failed%s of %d total\n' \
     "$G" "$PASS" "$X" "$R" "$FAIL" "$X" "$((PASS + FAIL))"
 
