@@ -1536,8 +1536,8 @@ got=$({ "$MDQY" --explain-mode 'walk(.)' 2>&1; printf x; })
 sin TT_explain_tree 'tree' "${got%x}"
 
 # --compile-only reports parse errors but doesn't read input.
-"$MDQY" --compile-only 'headings | .text' < /dev/null 2>&1 >/dev/null && ok TT_compile_only_clean || ko "TT_compile_only_clean"
-"$MDQY" --compile-only '(((' < /dev/null 2>&1 >/dev/null && ko "TT_compile_only_bad" || ok TT_compile_only_bad
+"$MDQY" --compile-only 'headings | .text' < /dev/null >/dev/null 2>&1 && ok TT_compile_only_clean || ko "TT_compile_only_clean"
+"$MDQY" --compile-only '(((' < /dev/null >/dev/null 2>&1 && ko "TT_compile_only_bad" || ok TT_compile_only_bad
 
 section "UU. number edges"
 
