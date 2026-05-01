@@ -49,17 +49,12 @@ schemars = { version = "0.8", optional = true }
 notify = { version = "7", optional = true, default-features = false, features = ["macos_kqueue"] }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 clap_complete = "4"
 clap_mangen = "0.2"
 proptest = { version = "1", default-features = false, features = ["std"] }
-
-[[bench]]
-name = "criterion"
-harness = false
 
 [profile.release]
 strip = "symbols"
